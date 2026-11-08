@@ -1,0 +1,10 @@
+{
+ "_comment": "Default USD prices. input_per_mtok = USD per 1M normal input tokens; the other token types are multipliers of the input price. Override per model in <project>/.sjck/prices.json (merged by key, the override wins). A model matches the longest key contained in its name; 'default' is the fallback.",
+ "multipliers": {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_creation": 1.25},
+ "models": {
+  "default": {"input_per_mtok": 3.0},
+  "opus": {"input_per_mtok": 5.0},
+  "sonnet": {"input_per_mtok": 3.0},
+  "haiku": {"input_per_mtok": 1.0}
+ }
+}
