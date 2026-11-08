@@ -124,9 +124,9 @@ oppure c'è stallo (nessun nodo running né pronto → chiedi all'utente):
    (reference/scripts.md). Subito dopo il lancio scrivi in `nodes[].agent_id`
    l'id restituito dal tool di lancio.
    Nodo `scout`: PRIMA del lancio esegui tu (lo scout non ha Bash) `python3
-   "<script>/interfaces.py" check <nome>`. Exit 0 (`fresh`) → non lanciarlo: l'interfaccia
+   "<script>/interfaces.py" check <nome>` (`<nome>` = basename senza `.md` del `.sjck/interfaces/*.md` in `nodes[].files`). Exit 0 (`fresh`) → non lanciarlo: l'interfaccia
    `.sjck/interfaces/<nome>.md` è valida e il nodo si chiude `validated` senza subagente
-   (una riga nel log). `stale`/`missing` → lancialo con `interfaccia: stale` nel prompt;
+   (una riga nel log). `stale` o exit != 0 → lancialo con `interfaccia: stale` nel prompt;
    se un nodo modifica un sorgente di un'interfaccia, `interfaces.py invalidate <nome>`.
 3. A completamento leggi solo .sjck/out/<ID>.json → `done`. Copia
    `assumptions` nel nodo; esegui `python3 "<script>"/watchdog.py usage --cwd "$PWD"`
@@ -134,7 +134,7 @@ oppure c'è stallo (nessun nodo running né pronto → chiedi all'utente):
    modificarlo. Costo in denaro: `.sjck/tokens.json` (`cost.usd`, `by_node[].cost_usd`,
    `by_agent[].cost_usd`), da citare SEMPRE col flag `estimated` (`true` = stima dai prezzi
    di `config/prices.json`, override `.sjck/prices.json`, non misurato; docs/costs.md).
-   Dopo un nodo `scout`: `python3 "<script>/interfaces.py" register <nome> <sources dell'out JSON>`.
+   Dopo un nodo `scout`: `python3 "<script>/interfaces.py" register <nome> <sources dell'out JSON>` (stesso `<nome>`).
    Per ogni voce di `findings` di `.sjck/out/<ID>.json` e di `PLAN.json`
    esegui `findings.py add --from <ID>`; i `findings` di `.val.json` e `REVIEW.json`
    sono correzioni, non si registrano.
