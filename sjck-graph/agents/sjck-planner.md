@@ -25,6 +25,9 @@ Regole del DAG:
   scrivono `comando -> esito atteso` (es. `python3 -m unittest discover -s tests -> exit 0`):
   li esegue lo script `checks.py` senza LLM. Le condizioni solo controllabili
   sul diff restano in prosa (le giudica il validatore LLM).
+- Non vedi CLAUDE.md: i comandi di test, lint e build del progetto li ricavi dal
+  repo con Read/Glob (package.json `scripts`, Makefile, pyproject.toml/tox.ini,
+  workflow CI in .github/workflows/), non li inventare.
 - La card contiene SOLO il contesto necessario a quel nodo.
 - Massimizza la larghezza del grafo: dipendenze solo dove sono reali.
 - Decidi e annota: se una scelta ha un default ragionevole, prendilo e

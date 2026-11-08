@@ -1,5 +1,10 @@
 # Changelog
 
+## sjck-graph — non rilasciato · efficienza in token (P1-P3)
+- P1: costo in USD per nodo, per agente e per run in `tokens.json` / `token-report.json`; prezzi configurabili (`sjck-graph/config/prices.json`, override `.sjck/prices.json`); flag `estimated` (costo reale da `cost-state` vs stima dai prezzi); `by_node[].models` è ora un dict per modello. Dettagli in `docs/costs.md`.
+- P2: dieta del contesto — riuso delle interfacce via hash (`scripts/interfaces.py check|register|invalidate`: con `fresh` lo scout non parte), card e stato selettivi per il validator (`cards.select_sections`, `cards.select_state`) e ordine del prompt stabile per la prompt cache (`cards.build_prompt`). Dettagli e riduzioni (stime) in `docs/context-diet.md`.
+- P3: validazione a due livelli — `scripts/checks.py` esegue i criteri `comando -> esito` della card (mai rieseguiti dall'LLM) e passa al validatore LLM solo i criteri residui non eseguibili (`green`/`residual` in `.sjck/out/<ID>.l1.json`); su `fail` l'LLM non parte; modello del validatore in `config/validation.json` (override `.sjck/validation.json`); `omitClaudeMd: true` su tutti gli agenti. Dettagli in `docs/validation.md`.
+
 ## sjck-graph 0.4.0 — 2026-10-28 · `/sjck-graph:sjck-update`
 - Nuovo comando `/sjck-graph:sjck-update` (`scripts/update.py`, solo libreria standard): confronta l'installato con l'ultima release GitHub e aggiorna plugin (marketplace `sjck`), estensione VS Code (`sjck.vsix`, solo se indietro; code/cursor/codium) e console (`sjck-console.tgz`, solo se già installata). `check` per il solo confronto, `--only`, `--editor`. Ricorda di riavviare Claude Code / ricaricare VS Code.
 - Versione del plugin portata a 0.4.0: era ferma a 0.3.2 nonostante planner interattivo, token reali e costo in euro, e con la stessa versione `claude plugin update` poteva non scaricare niente.

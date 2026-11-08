@@ -27,6 +27,9 @@ riga in `mode_reason`. Unica eccezione: senza validator un nodo non diventa
   `~/.claude/sjck-scripts`; `.claude/sjck-scripts`. Scrivi nel log `HH:MM script: <abs>`.
   Nessuna trovata → fermati e dillo all'utente. Metti la riga `script: <abs>` nel prompt di
   OGNI agente (dettagli: reference/scripts.md).
+- Prompt di OGNI agente, sempre in quest'ordine (`cards.build_prompt`, docs/context-diet.md):
+  system + `script:`, fuori scope/findings, budget, card, "Correzioni richieste" per ultima
+  (cresce ai retry senza invalidare il prefisso in prompt cache).
 - Sessione non interattiva (`claude -p`, o AskUserQuestion non disponibile): niente domande,
   segui le regole di reference/findings.md e reference/critic.md; ogni altro
   "chiedi all'utente" diventa run `failed` con il motivo nel log.
@@ -91,7 +94,7 @@ Ogni card in .sjck/cards/<ID>.md:
 ## Obiettivo
 ## Puoi modificare
 ## Leggi
-## Criteri di accettazione   (comando + esito atteso, o condizione sul diff)
+## Criteri di accettazione   (`` `comando` `` → esito atteso: li esegue checks.py, docs/validation.md)
 ## Fuori scope              (cosa il nodo NON deve sistemare: lo annota nei findings)
 ## Correzioni richieste      (vuota; la compili coi findings del validator)
 ```
@@ -120,13 +123,33 @@ oppure c'è stallo (nessun nodo running né pronto → chiedi all'utente):
    del nodo come override al lancio; il `budget` va scritto nel prompt
    (reference/scripts.md). Subito dopo il lancio scrivi in `nodes[].agent_id`
    l'id restituito dal tool di lancio.
+   Nodo `scout`: PRIMA del lancio esegui tu (lo scout non ha Bash) `python3
+   "<script>/interfaces.py" check <nome>`. Exit 0 (`fresh`) → non lanciarlo: l'interfaccia
+   `.sjck/interfaces/<nome>.md` è valida e il nodo si chiude `validated` senza subagente
+   (una riga nel log). `stale`/`missing` → lancialo con `interfaccia: stale` nel prompt;
+   se un nodo modifica un sorgente di un'interfaccia, `interfaces.py invalidate <nome>`.
 3. A completamento leggi solo .sjck/out/<ID>.json → `done`. Copia
    `assumptions` nel nodo; esegui `python3 "<script>"/watchdog.py usage --cwd "$PWD"`
    (scrive `usage` dei nodi e le somme in metrics) e RILEGGI state.json prima di
-   modificarlo. Per ogni voce di `findings` di `.sjck/out/<ID>.json` e di `PLAN.json`
+   modificarlo. Costo in denaro: `.sjck/tokens.json` (`cost.usd`, `by_node[].cost_usd`,
+   `by_agent[].cost_usd`), da citare SEMPRE col flag `estimated` (`true` = stima dai prezzi
+   di `config/prices.json`, override `.sjck/prices.json`, non misurato; docs/costs.md).
+   Dopo un nodo `scout`: `python3 "<script>/interfaces.py" register <nome> <sources dell'out JSON>`.
+   Per ogni voce di `findings` di `.sjck/out/<ID>.json` e di `PLAN.json`
    esegui `findings.py add --from <ID>`; i `findings` di `.val.json` e `REVIEW.json`
    sono correzioni, non si registrano.
-4. Lancia `sjck-validator` sull'ID → .sjck/out/<ID>.val.json:
+4. Livello 1, deterministico (docs/validation.md): `python3 "<script>/checks.py" run <ID> --cwd "$PWD"`
+   — JSON su stdout e in `.sjck/out/<ID>.l1.json`. Agisci sul campo `action`:
+   - `done` → `validated` senza validator LLM (riga nel log);
+   - `retry` → NON lanciare il validator: appendi `output` nella card sotto "Correzioni richieste" e vai al ramo `fail` qui sotto;
+   - `llm` → lancia `sjck-validator` sull'ID con override di modello = campo `model` del
+     JSON (`config/validation.json`, override `.sjck/validation.json`): legge
+     `.sjck/out/<ID>.l1.json`, NON riesegue i comandi in `green`, giudica solo `residual`,
+     scope e regressioni.
+   Exit 3 = config non valida: dillo all'utente e correggila, non è un `fail` del nodo.
+   Al validator passa la card ridotta (`cards.select_sections`: "Puoi modificare",
+   "Leggi", "Criteri di accettazione", "Fuori scope") e solo la fetta di stato del nodo
+   e delle sue deps (`cards.select_state`). Esito in .sjck/out/<ID>.val.json:
    - `pass` → `validated`
    - `fail`, `attempts < 2` → findings nella card sotto "Correzioni richieste",
      attempts += 1, riprendi lo STESSO implementer con SendMessage → `running`
@@ -153,4 +176,5 @@ oppure c'è stallo (nessun nodo running né pronto → chiedi all'utente):
 - Mai saltare un nodo: si sblocca solo da state.json.
 - Mai leggere i file prodotti dagli agenti: solo i loro JSON.
 - Mai due nodi paralleli sugli stessi file.
-- Mai `validated` senza un .val.json con `verdict: pass`.
+- Mai `validated` senza un `pass`: .val.json con `verdict: pass`, `action: done` del
+  livello 1, o scout saltato perché l'interfaccia è `fresh`.
