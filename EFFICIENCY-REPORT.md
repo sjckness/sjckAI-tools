@@ -167,9 +167,9 @@ Limiti noti:
   richiesta HTTP alla BCE dentro il `refresh` dell'hook, mentre i vincoli della
   task vietano le chiamate di rete. È preesistente ed è stata **lasciata
   invariata per scelta** in fase di piano: il percorso del costo USD è offline e
-  non la chiama (`sjck-graph/scripts/tokens.py:371`). Resta una tensione
+  non la chiama (`sjck-graph/scripts/tokens.py:533`, `_costs`). Resta una tensione
   dichiarata, non risolta.
-- **F005** (`sjck-graph/scripts/tokens.py:581`): conseguenza della stessa
+- **F005** (`sjck-graph/scripts/tokens.py:644`): conseguenza della stessa
   scelta — i costi stimati sono solo in USD, senza `cost_eur`; l'EUR esiste solo
   sul percorso `cost-state`.
 - **F001** (`sjck-graph/scripts/tokens.py:580`): `build()` riparsa tutti i
@@ -276,11 +276,14 @@ Limiti noti:
 - **Scope-check (F016).** Sul ramo `done` il livello 1 chiudeva il nodo
   `validated` senza guardare il diff: il controllo di scope che prima faceva il
   validatore LLM era perso, quindi un nodo poteva scrivere fuori dai suoi file
-  restando verde. Ripristinato in `checks.py`: `git diff --name-only HEAD` più i
-  file non tracciati contro `## Puoi modificare`; se esce dallo scope l'esito
-  degrada a `ambiguous` (mai `fail`) e parte il livello 2. Non si applica senza
-  la sezione o fuori da un repo git; il controllo di regressioni (stub, TODO,
-  test disattivati) resta solo al livello 2, quindi non è coperto sul ramo `done`.
+  restando verde. Ripristinato in `checks.py`: `git diff --name-only <base>` più
+  i file non tracciati contro `## Puoi modificare`; se esce dallo scope l'esito
+  degrada a `ambiguous` (mai `fail`) e parte il livello 2. Anche lo scope non
+  verificabile (manca la sezione, non è un repo git, base inesistente) dà
+  `ambiguous`. Limite: senza `--base <sha>` il confronto è con HEAD e i commit
+  fatti dal nodo non si vedono, quindi l'orchestratore deve passare il commit di
+  partenza (`SKILL.md`). Il controllo di regressioni (stub, TODO, test
+  disattivati) resta solo al livello 2, quindi non è coperto sul ramo `done`.
 - **F008** (`sjck-graph/tests/test_install.py`): ogni `unittest discover` di
   questo run ha toccato l'installazione reale della macchina (stampa
   `VS Code extension (code): ok`). Preesistente e fuori rubrica.

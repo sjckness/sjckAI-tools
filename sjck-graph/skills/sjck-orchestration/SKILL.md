@@ -118,7 +118,7 @@ modificarlo (lo script vi scrive `plan_score`). Rilancialo dopo ogni nodo aggiun
 Ripeti finché tutti i nodi sono `validated`/`done-unverified`, oppure uno è `failed`,
 oppure c'è stallo (nessun nodo running né pronto → chiedi all'utente):
 1. Pronti = `pending` con TUTTE le deps `validated` (`done` non basta).
-2. Segnali `running` in state.json, POI lanciali tutti insieme in background
+2. Segnali `running` in state.json (log: `base <ID> $(git rev-parse HEAD)`), POI lanciali insieme in background
    (`isolation: worktree` se più di uno scrive file). Passa `model` ed `effort`
    del nodo come override al lancio; il `budget` va scritto nel prompt
    (reference/scripts.md). Subito dopo il lancio scrivi in `nodes[].agent_id`
@@ -138,9 +138,9 @@ oppure c'è stallo (nessun nodo running né pronto → chiedi all'utente):
    Per ogni voce di `findings` di `.sjck/out/<ID>.json` e di `PLAN.json`
    esegui `findings.py add --from <ID>`; i `findings` di `.val.json` e `REVIEW.json`
    sono correzioni, non si registrano.
-4. Livello 1, deterministico (docs/validation.md): `python3 "<script>/checks.py" run <ID> --cwd "$PWD"`
+4. Livello 1, deterministico (docs/validation.md): `python3 "<script>/checks.py" run <ID> --cwd "$PWD" --base <sha del log>`
    — JSON su stdout e in `.sjck/out/<ID>.l1.json`. Agisci sul campo `action`:
-   - `done` → `validated` senza validator LLM (riga nel log); il livello 1 controlla lo scope sul diff e se esce da "Puoi modificare" dà `llm`;
+   - `done` → `validated` senza validator LLM (riga nel log); lo scope-check (diff da `--base`: senza, i commit del nodo sono invisibili) esce da "Puoi modificare" o non è verificabile → `llm`;
    - `retry` → NON lanciare il validator: appendi `output` nella card sotto "Correzioni richieste" e vai al ramo `fail` qui sotto;
    - `llm` → lancia `sjck-validator` sull'ID con override di modello = campo `model` del
      JSON (`config/validation.json`, override `.sjck/validation.json`): legge

@@ -13,13 +13,16 @@ Il livello 1 NON assolve mai cio' che non ha controllato: se resta anche
 un solo criterio non eseguibile l'esito e' `ambiguous`; il livello 2 riceve
 `green` (comandi gia' verdi, da non rieseguire) e `residual` (da giudicare).
 
-Scope-check (F016): il livello 1 confronta il diff (`git diff --name-only HEAD`
-piu' i file non tracciati, rilevati PRIMA di eseguire i comandi) con i percorsi
-di `## Puoi modificare`. Se il diff tocca altro l'esito diventa `ambiguous`
-(mai `fail`: non e' un criterio fallito) e il livello 2 giudica lo scope.
-Senza sezione `Puoi modificare` o fuori da un repo git il controllo non si applica.
+Scope-check (F016): il livello 1 confronta il diff (`git diff --name-only <base>`,
+base = `--base <sha>` o HEAD, piu' i file non tracciati, rilevati PRIMA di eseguire
+i comandi) con i percorsi di `## Puoi modificare`. Se il diff tocca altro l'esito
+diventa `ambiguous` (mai `fail`: non e' un criterio fallito) e il livello 2
+giudica lo scope. Se lo scope non e' verificabile (manca la sezione, non e' un
+repo git, base non valida) l'esito e' `ambiguous` comunque: un controllo non
+verificabile non e' un controllo superato. Senza `--base` i commit fatti dal nodo
+sono invisibili (il diff contro HEAD e' vuoto): l'orchestratore passa `--base`.
 
-Uso:  checks.py run <ID> [--cwd DIR]   -> JSON (+ .sjck/out/<ID>.l1.json);
+Uso:  checks.py run <ID> [--cwd DIR] [--base SHA] -> JSON (+ .sjck/out/<ID>.l1.json);
                                           exit 0 pass, 1 fail, 2 ambiguous,
                                           3 configurazione non valida
       checks.py model [--cwd DIR]      -> modello del validatore LLM
@@ -114,15 +117,16 @@ def _in_scope(path, allowed):
     return False
 
 
-def changed_files(cwd="."):
-    """File modificati o nuovi nel working tree, o None se non e' un repo git."""
+def changed_files(cwd=".", base=None):
+    """File cambiati rispetto a `base` (default HEAD) nel working tree, piu' i non
+    tracciati; None se non e' un repo git o la base non esiste."""
     def git(*args):
         p = subprocess.run(("git",) + args, cwd=cwd, stdout=subprocess.PIPE,
                            stderr=subprocess.DEVNULL, universal_newlines=True)
         return p.stdout.splitlines() if p.returncode == 0 else None
     try:
-        tracked = git("diff", "--name-only", "HEAD")
-        if tracked is None:
+        tracked = git("diff", "--name-only", base or "HEAD")
+        if tracked is None and not base:
             tracked = git("diff", "--name-only")
         new = git("ls-files", "--others", "--exclude-standard")
     except OSError:
@@ -132,13 +136,14 @@ def changed_files(cwd="."):
     return sorted(set(tracked + new))
 
 
-def out_of_scope(card_text, cwd="."):
-    """File del diff non permessi dalla card (ignora .sjck/); [] se non verificabile."""
+def out_of_scope(card_text, cwd=".", base=None):
+    """File del diff non permessi dalla card (ignora .sjck/).
+    -> (lista, verificabile): verificabile=False se manca la sezione o il diff."""
     allowed = allowed_paths(card_text)
-    changed = changed_files(cwd) if allowed else None
-    if not changed:
-        return []
-    return [f for f in changed if not f.startswith(".sjck/") and not _in_scope(f, allowed)]
+    changed = changed_files(cwd, base) if allowed else None
+    if changed is None:
+        return [], False
+    return [f for f in changed if not f.startswith(".sjck/") and not _in_scope(f, allowed)], True
 
 
 def decide(res):
@@ -151,14 +156,17 @@ def decide(res):
     return "done", False
 
 
-def run_checks(card_text, cwd=".", timeout=600):
+def run_checks(card_text, cwd=".", timeout=600, base=None):
     """Esegue il livello 1.
     -> {'outcome','checks','output','green','residual','llm_required'}."""
     found, other = parse_checks(card_text)
     results, output, green = [], [], []
     residual = list(other)
-    stray = out_of_scope(card_text, cwd)  # prima dei comandi: sono il lavoro del nodo
-    if stray:
+    stray, verifiable = out_of_scope(card_text, cwd, base)  # prima dei comandi
+    if not verifiable:
+        residual.append("scope: non verificabile (manca ## Puoi modificare / non è un "
+                        "repo git / base non valida): giudicalo dal diff")
+    elif stray:
         residual.append("scope: il diff tocca file fuori da `## Puoi modificare`: "
                         + ", ".join(stray))
     for c in found:
@@ -192,11 +200,11 @@ def run_checks(card_text, cwd=".", timeout=600):
             "llm_required": requires_llm(card_text)}
 
 
-def validate(card_text, run_llm, cwd=".", config=None):
+def validate(card_text, run_llm, cwd=".", config=None, base=None):
     """Orchestra i due livelli. `run_llm(model, green, residual)` e' il lancio del
     validatore LLM (iniettato: nei test e' una spia). Su `fail` NON viene chiamato."""
     cfg = config or load_config(cwd)
-    res = run_checks(card_text, cwd, cfg.get("timeout", 600))
+    res = run_checks(card_text, cwd, cfg.get("timeout", 600), base)
     res["model"] = cfg["model"]
     res["action"], res["invoke_llm"] = decide(res)
     res["llm_invoked"] = res["invoke_llm"]
@@ -212,6 +220,8 @@ def main(argv=None):
     r = sub.add_parser("run")
     r.add_argument("id")
     r.add_argument("--cwd", default=".")
+    r.add_argument("--base", default=None,
+                   help="commit da cui il nodo e' partito (default HEAD)")
     m = sub.add_parser("model")
     m.add_argument("--cwd", default=".")
     a = ap.parse_args(argv)
@@ -225,7 +235,7 @@ def main(argv=None):
         return 0
     path = os.path.join(a.cwd, ".sjck", "cards", a.id + ".md")
     with open(path, encoding="utf-8") as f:
-        res = run_checks(f.read(), a.cwd, cfg.get("timeout", 600))
+        res = run_checks(f.read(), a.cwd, cfg.get("timeout", 600), a.base)
     res["action"], res["invoke_llm"] = decide(res)
     res.update(id=a.id, model=cfg["model"])
     out = os.path.join(a.cwd, ".sjck", "out")

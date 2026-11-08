@@ -14,8 +14,28 @@ import tokens  # noqa: E402
 
 
 def card(*crit):
-    return "# T\n## Obiettivo\nx\n## Criteri di accettazione\n" + \
+    # dichiara uno scope: senza `## Puoi modificare` il livello 1 e' `ambiguous`
+    return "# T\n## Obiettivo\nx\n## Puoi modificare\n- `f.txt`\n## Criteri di accettazione\n" + \
         "".join("- %s\n" % c for c in crit) + "## Fuori scope\n-\n"
+
+
+def git_init(d, files=("f.txt",)):
+    """Repo git pulito con un commit iniziale (i file dati tracciati e invariati)."""
+    for args in (["init", "-q"], ["config", "user.email", "a@b"], ["config", "user.name", "t"]):
+        subprocess.run(["git"] + args, cwd=d, check=True)
+    for n in files:
+        with open(os.path.join(d, n), "w") as f:
+            f.write("1\n")
+    subprocess.run(["git", "add", "."], cwd=d, check=True)
+    subprocess.run(["git", "commit", "-qm", "i", "--allow-empty"], cwd=d, check=True)
+
+
+REPO = tempfile.mkdtemp()
+git_init(REPO)
+
+
+def tearDownModule():
+    __import__("shutil").rmtree(REPO, True)
 
 
 class Spy:
@@ -32,7 +52,7 @@ class Spy:
 
 class TestLevel1(unittest.TestCase):
     def test_pass(self):
-        r = checks.run_checks(card("`true` → exit 0"))
+        r = checks.run_checks(card("`true` → exit 0"), REPO)
         self.assertEqual(r["outcome"], "pass")
 
     def test_fail_has_output(self):
@@ -41,7 +61,7 @@ class TestLevel1(unittest.TestCase):
         self.assertIn("boom", r["output"])
 
     def test_expected_nonzero_exit(self):
-        self.assertEqual(checks.run_checks(card("`exit 3` → exit 3"))["outcome"], "pass")
+        self.assertEqual(checks.run_checks(card("`exit 3` → exit 3"), REPO)["outcome"], "pass")
 
     def test_fail_dominates_pass(self):
         r = checks.run_checks(card("`true` → exit 0", "`false` → exit 0"))
@@ -65,27 +85,27 @@ class TestLevel1(unittest.TestCase):
         self.assertNotIn("code", r["checks"][0])
 
     def test_prose_alongside_green_is_never_pass(self):
-        r = checks.run_checks(card("`true` → exit 0", "il diff tocca solo i file in scope"))
+        r = checks.run_checks(card("`true` → exit 0", "il diff tocca solo i file in scope"), REPO)
         self.assertEqual(r["outcome"], "ambiguous")
         self.assertEqual(r["green"], ["true"])
         self.assertEqual(r["residual"], ["il diff tocca solo i file in scope"])
 
     def test_green_and_residual_split(self):
-        r = checks.run_checks(card("`true` → ok", "`true` → esce 0 oppure 1", "prosa"))
+        r = checks.run_checks(card("`true` → ok", "`true` → esce 0 oppure 1", "prosa"), REPO)
         self.assertEqual(r["green"], ["true"])
         self.assertEqual(r["residual"], ["prosa", "`true` -> esce 0 oppure 1"])
 
     def test_all_executable_has_empty_residual(self):
-        r = checks.run_checks(card("`true` → exit 0"))
+        r = checks.run_checks(card("`true` → exit 0"), REPO)
         self.assertEqual((r["outcome"], r["residual"]), ("pass", []))
 
     def test_zero_failures_phrase(self):
-        r = checks.run_checks(card("`true` → 0 fallimenti"))
+        r = checks.run_checks(card("`true` → 0 fallimenti"), REPO)
         self.assertEqual(r["outcome"], "pass")
 
     def test_runs_in_cwd(self):
         with tempfile.TemporaryDirectory() as d:
-            open(os.path.join(d, "f.txt"), "w").close()
+            git_init(d)
             self.assertEqual(checks.run_checks(card("`test -f f.txt` → exit 0"), d)["outcome"], "pass")
 
 
@@ -106,13 +126,13 @@ class TestTwoLevels(unittest.TestCase):
 
     def test_pass_does_not_invoke_llm(self):
         spy = Spy()
-        r = checks.validate(card("`true` → exit 0"), spy, config=self.CFG)
+        r = checks.validate(card("`true` → exit 0"), spy, REPO, config=self.CFG)
         self.assertEqual(len(spy.calls), 0)
         self.assertEqual(r["verdict"], "pass")
 
     def test_green_not_rerun_passed_to_llm(self):
         spy = Spy()
-        checks.validate(card("`true` → exit 0", "prosa"), spy, config=self.CFG)
+        checks.validate(card("`true` → exit 0", "prosa"), spy, REPO, config=self.CFG)
         self.assertEqual(spy.args, (["true"], ["prosa"]))
 
     def test_ambiguous_invokes_llm_with_configured_model(self):
@@ -123,7 +143,7 @@ class TestTwoLevels(unittest.TestCase):
 
     def test_card_can_require_llm_after_pass(self):
         spy = Spy()
-        checks.validate(card("`true` → exit 0", "validator: llm"), spy, config=self.CFG)
+        checks.validate(card("`true` → exit 0", "validator: llm"), spy, REPO, config=self.CFG)
         self.assertEqual(len(spy.calls), 1)
 
 
@@ -159,6 +179,7 @@ class TestConfig(unittest.TestCase):
 class TestCli(unittest.TestCase):
     def run_cli(self, text, override=None):
         with tempfile.TemporaryDirectory() as d:
+            git_init(d)
             os.makedirs(os.path.join(d, ".sjck", "cards"))
             with open(os.path.join(d, ".sjck", "cards", "T1.md"), "w") as f:
                 f.write(text)
@@ -208,7 +229,7 @@ class TestCli(unittest.TestCase):
         for crit in (["`false` → exit 0"], ["`true` → exit 0"], ["prosa"],
                      ["`true` → exit 0", "validator: llm"]):
             _, out, _, _ = self.run_cli(card(*crit))
-            r = checks.validate(card(*crit), Spy(), config=TestTwoLevels.CFG)
+            r = checks.validate(card(*crit), Spy(), REPO, config=TestTwoLevels.CFG)
             self.assertEqual((out["action"], out["invoke_llm"]),
                              (r["action"], r["invoke_llm"]), crit)
 
@@ -288,6 +309,69 @@ class TestScope(unittest.TestCase):
         self.write("sub/x.py")
         r = checks.run_checks(scoped_card(["`sub/`"], "`true` -> exit 0"), self.d)
         self.assertEqual(r["outcome"], "pass")
+
+    def test_no_section_is_ambiguous_even_if_green(self):
+        """Senza `## Puoi modificare` lo scope non e' verificabile: livello 2."""
+        self.write("other.py")
+        c = "# T\n## Obiettivo\nx\n## Criteri di accettazione\n- `true` -> exit 0\n"
+        r = checks.run_checks(c, self.d)
+        self.assertEqual(r["green"], ["true"])
+        self.assertEqual(r["outcome"], "ambiguous")
+        self.assertTrue(any(x.startswith("scope: non verificabile") for x in r["residual"]))
+        self.assertEqual(checks.decide(r), ("llm", True))
+
+    def test_not_a_git_repo_is_ambiguous(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = checks.run_checks(scoped_card(["`ok.py`"], "`true` -> exit 0"), d)
+            self.assertEqual(r["outcome"], "ambiguous")
+            self.assertTrue(checks.decide(r)[1])
+
+    def git(self, *a):
+        subprocess.run(["git"] + list(a), cwd=self.d, check=True, stdout=subprocess.DEVNULL)
+
+    def test_committed_stray_file_invisible_without_base_visible_with_base(self):
+        """Il nodo committa il proprio lavoro: contro HEAD il diff e' vuoto (limite
+        dichiarato); con --base/base= il file fuori scope viene visto."""
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.d, stdout=subprocess.PIPE,
+                              universal_newlines=True).stdout.strip()
+        self.write("ok.py")
+        self.write("stray.py")
+        self.git("add", ".")
+        self.git("commit", "-qm", "lavoro del nodo")
+        c = scoped_card(["`ok.py`"], "`true` -> exit 0")
+        self.assertEqual(checks.run_checks(c, self.d)["out_of_scope"], [])  # limite senza base
+        r = checks.run_checks(c, self.d, base=base)
+        self.assertEqual(r["out_of_scope"], ["stray.py"])
+        self.assertEqual((r["outcome"], checks.decide(r)), ("ambiguous", ("llm", True)))
+
+    def test_committed_in_scope_with_base_passes(self):
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.d, stdout=subprocess.PIPE,
+                              universal_newlines=True).stdout.strip()
+        self.write("ok.py")
+        self.git("commit", "-qam", "lavoro del nodo")
+        r = checks.run_checks(scoped_card(["`ok.py`"], "`true` -> exit 0"), self.d, base=base)
+        self.assertEqual(r["outcome"], "pass")
+
+    def test_invalid_base_is_ambiguous(self):
+        r = checks.run_checks(scoped_card(["`ok.py`"], "`true` -> exit 0"), self.d, base="nonesiste")
+        self.assertEqual(r["outcome"], "ambiguous")
+
+    def test_cli_base_flag(self):
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.d, stdout=subprocess.PIPE,
+                              universal_newlines=True).stdout.strip()
+        self.write("stray.py")
+        self.git("add", ".")
+        self.git("commit", "-qm", "x")
+        os.makedirs(os.path.join(self.d, ".sjck", "cards"))
+        with open(os.path.join(self.d, ".sjck", "cards", "T1.md"), "w") as f:
+            f.write(scoped_card(["`ok.py`"], "`true` -> exit 0"))
+        run = lambda *x: subprocess.run([sys.executable, os.path.join(SCRIPTS, "checks.py"), "run", "T1",
+                                         "--cwd", self.d] + list(x), stdout=subprocess.PIPE,
+                                        universal_newlines=True)
+        self.assertEqual(run().returncode, 0)
+        p = run("--base", base)
+        self.assertEqual(p.returncode, 2)
+        self.assertEqual(json.loads(p.stdout)["out_of_scope"], ["stray.py"])
 
     def test_sjck_dir_ignored(self):
         os.makedirs(os.path.join(self.d, ".sjck", "out"))

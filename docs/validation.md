@@ -24,14 +24,23 @@ validatore: il livello 2 riceve `green` (comandi già verdi, da non rilanciare)
 e `residual` (i soli criteri da giudicare), anche in `.sjck/out/<ID>.l1.json`.
 La decisione `invoke_llm` è una sola funzione (`decide`) usata da CLI e `validate()`.
 
-**Scope-check.** Il livello 1 confronta `git diff --name-only HEAD` (più i file
-non tracciati, letti prima di eseguire i comandi; `.sjck/` ignorata) con i
-percorsi di `## Puoi modificare`. Se il diff tocca altro, l'esito diventa
-`ambiguous` anche con tutti i comandi verdi (mai `fail`: non è un criterio della
-card), `out_of_scope` elenca i file, `residual` ne dà la voce `scope:` e parte il
-livello 2. Il controllo non si applica senza la sezione `Puoi modificare` o fuori
-da un repo git. Con nodi paralleli sullo stesso working tree il diff include anche
-i file degli altri nodi: l'esito è più prudente (`ambiguous`), mai più permissivo.
+**Scope-check.** Il livello 1 confronta `git diff --name-only <base>` (più i
+file non tracciati, letti prima di eseguire i comandi; `.sjck/` ignorata) con i
+percorsi di `## Puoi modificare`. `<base>` è `checks.py run --base <sha>`: il
+commit a cui il nodo è partito, che l'orchestratore registra al lancio e passa
+qui. Se il diff tocca altro, l'esito diventa `ambiguous` anche con tutti i
+comandi verdi (mai `fail`: non è un criterio della card), `out_of_scope` elenca i
+file, `residual` ne dà la voce `scope:` e parte il livello 2.
+
+Se lo scope **non è verificabile** (manca `## Puoi modificare`, non è un repo
+git, `--base` non esiste) l'esito è `ambiguous` con la voce `scope: non
+verificabile`: un controllo che non si può fare non è un controllo superato.
+
+**Limiti.** Senza `--base` il confronto è con HEAD: i commit fatti dal nodo
+(le card chiedono `git commit --only`) non compaiono nel diff e un file fuori
+scope già committato non si vede; per questo l'orchestratore deve passare
+`--base`. Con nodi paralleli sullo stesso working tree il diff include anche i
+file degli altri nodi: l'esito è più prudente (`ambiguous`), mai più permissivo.
 
 ## Formato dei criteri eseguibili
 
