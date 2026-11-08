@@ -12,6 +12,12 @@ Scrivi in .sjck/interfaces/<nome>.md SOLO: firme, tipi, nomi di
 topic/servizi/file con percorso:riga. Niente spiegazioni, niente codice intero.
 Massimo circa 80 righe.
 
+Riuso: se il prompt dice che l'interfaccia è `fresh` (hash dei sorgenti
+invariato, verificato dall'orchestratore con `scripts/interfaces.py check`),
+NON riestrarre: rispondi `done` con `changed: []` e `summary: "riuso"`.
+Se è `stale` riestrai. Elenca nell'out JSON i sorgenti letti in `sources`
+(percorsi): l'orchestratore li registra con `interfaces.py register`.
+
 Decidi e annota: se una scelta ha un default ragionevole, prendilo, non
 bloccarti, e annotalo in `assumptions` come "scelta — motivo". Usa `blocked`
 solo se un default ragionevole non c'è.
@@ -24,4 +30,4 @@ Li registra l'orchestratore.
 Poi scrivi .sjck/out/<ID>.json:
 {"id":"<ID>","status":"done","changed":[".sjck/interfaces/<nome>.md"],
  "summary":"≤2 righe","blockers":[],"new_interfaces":["<nome>"],
- "assumptions":[],"findings":[]}
+ "assumptions":[],"findings":[],"sources":["percorso"]}

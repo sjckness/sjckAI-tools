@@ -57,3 +57,41 @@ def section_paths(text, section):
 
 def count_criteria(text):
     return len(section_items(text, "Criteri di accettazione"))
+
+
+def select_sections(text, wanted):
+    """Titolo + solo le sezioni `wanted` (nell'ordine della card)."""
+    parsed = parse_card(text)
+    first = text.splitlines()[0] if text.startswith("# ") else ""
+    parts = [first] if first else []
+    for title, body in parsed.items():
+        if title in wanted:
+            parts.append("## " + title + "\n" + body)
+    return "\n\n".join(parts) + "\n"
+
+
+def select_state(state, node_id):
+    """Dallo stato solo il nodo e le sue deps (id/status/files per le deps)."""
+    nodes = {n.get("id"): n for n in state.get("nodes", []) if isinstance(n, dict)}
+    node = nodes.get(node_id)
+    if node is None:
+        return {"nodes": []}
+    out = [node]
+    for d in node.get("deps") or []:
+        dn = nodes.get(d)
+        if dn is not None:
+            out.append({k: dn[k] for k in ("id", "status", "files") if k in dn})
+    return {"nodes": out}
+
+
+# Ordine del prompt: prefisso invariante (cacheable) poi coda variabile.
+# Vedi docs/context-diet.md.
+INVARIANT_ORDER = ("system", "fuori_scope", "budget")
+VARIABLE_ORDER = ("card", "correzioni")
+
+
+def build_prompt(system, fuori_scope, budget, card, correzioni=""):
+    """Assembla il prompt: system, fuori scope, budget, poi card e correzioni.
+    Le prime tre parti non dipendono dal nodo ne' dal tentativo."""
+    parts = [system, fuori_scope, budget, card, correzioni]
+    return "\n\n".join(p.strip("\n") for p in parts if p and p.strip()) + "\n"
