@@ -23,8 +23,9 @@ class Spy:
         self.calls = []
         self.verdict = verdict
 
-    def __call__(self, model):
+    def __call__(self, model, green=(), residual=()):
         self.calls.append(model)
+        self.args = (list(green), list(residual))
         return self.verdict
 
 
@@ -57,6 +58,26 @@ class TestLevel1(unittest.TestCase):
         self.assertEqual(r["outcome"], "ambiguous")
         self.assertNotIn("code", r["checks"][0])
 
+    def test_oppure_is_ambiguous_and_not_run(self):
+        r = checks.run_checks(card("`false` → esce 0 oppure 1"))
+        self.assertEqual(r["outcome"], "ambiguous")
+        self.assertNotIn("code", r["checks"][0])
+
+    def test_prose_alongside_green_is_never_pass(self):
+        r = checks.run_checks(card("`true` → exit 0", "il diff tocca solo i file in scope"))
+        self.assertEqual(r["outcome"], "ambiguous")
+        self.assertEqual(r["green"], ["true"])
+        self.assertEqual(r["residual"], ["il diff tocca solo i file in scope"])
+
+    def test_green_and_residual_split(self):
+        r = checks.run_checks(card("`true` → ok", "`true` → esce 0 oppure 1", "prosa"))
+        self.assertEqual(r["green"], ["true"])
+        self.assertEqual(r["residual"], ["prosa", "`true` -> esce 0 oppure 1"])
+
+    def test_all_executable_has_empty_residual(self):
+        r = checks.run_checks(card("`true` → exit 0"))
+        self.assertEqual((r["outcome"], r["residual"]), ("pass", []))
+
     def test_zero_failures_phrase(self):
         r = checks.run_checks(card("`true` → 0 fallimenti"))
         self.assertEqual(r["outcome"], "pass")
@@ -87,6 +108,11 @@ class TestTwoLevels(unittest.TestCase):
         r = checks.validate(card("`true` → exit 0"), spy, config=self.CFG)
         self.assertEqual(len(spy.calls), 0)
         self.assertEqual(r["verdict"], "pass")
+
+    def test_green_not_rerun_passed_to_llm(self):
+        spy = Spy()
+        checks.validate(card("`true` → exit 0", "prosa"), spy, config=self.CFG)
+        self.assertEqual(spy.args, (["true"], ["prosa"]))
 
     def test_ambiguous_invokes_llm_with_configured_model(self):
         spy = Spy("fail")
@@ -130,22 +156,67 @@ class TestConfig(unittest.TestCase):
 
 
 class TestCli(unittest.TestCase):
-    def run_cli(self, text):
+    def run_cli(self, text, override=None):
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, ".sjck", "cards"))
             with open(os.path.join(d, ".sjck", "cards", "T1.md"), "w") as f:
                 f.write(text)
+            if override is not None:
+                with open(os.path.join(d, ".sjck", "validation.json"), "w") as f:
+                    json.dump(override, f)
             p = subprocess.run([sys.executable, os.path.join(SCRIPTS, "checks.py"),
                                 "run", "T1", "--cwd", d], stdout=subprocess.PIPE,
-                               universal_newlines=True)
-            return p.returncode, json.loads(p.stdout)
+                               stderr=subprocess.PIPE, universal_newlines=True)
+            l1 = os.path.join(d, ".sjck", "out", "T1.l1.json")
+            saved = None
+            if os.path.isfile(l1):
+                with open(l1) as f:
+                    saved = json.load(f)
+            out = json.loads(p.stdout) if p.stdout.strip() else None
+            return p.returncode, out, p.stderr, saved
 
     def test_exit_codes(self):
         self.assertEqual(self.run_cli(card("`true` → exit 0"))[0], 0)
         self.assertEqual(self.run_cli(card("`false` → exit 0"))[0], 1)
-        code, out = self.run_cli("# T\n## Obiettivo\nx\n")
+        code, out, _, _ = self.run_cli("# T\n## Obiettivo\nx\n")
         self.assertEqual(code, 2)
         self.assertTrue(out["invoke_llm"])
+
+    def test_fail_does_not_invoke_llm(self):
+        _, out, _, _ = self.run_cli(card("`false` → exit 0", "validator: llm"))
+        self.assertFalse(out["invoke_llm"])
+        self.assertEqual(out["action"], "retry")
+
+    def test_pass_with_validator_llm_invokes(self):
+        code, out, _, _ = self.run_cli(card("`true` → exit 0", "validator: llm"))
+        self.assertEqual(code, 0)
+        self.assertTrue(out["invoke_llm"])
+
+    def test_pass_without_llm_does_not_invoke(self):
+        _, out, _, _ = self.run_cli(card("`true` → exit 0"))
+        self.assertFalse(out["invoke_llm"])
+
+    def test_cli_emits_green_and_residual(self):
+        code, out, _, saved = self.run_cli(card("`true` → exit 0", "prosa"))
+        self.assertEqual(code, 2)
+        self.assertTrue(out["invoke_llm"])
+        self.assertEqual((out["green"], out["residual"]), (["true"], ["prosa"]))
+        self.assertEqual(saved, out)
+
+    def test_cli_and_validate_share_decision(self):
+        for crit in (["`false` → exit 0"], ["`true` → exit 0"], ["prosa"],
+                     ["`true` → exit 0", "validator: llm"]):
+            _, out, _, _ = self.run_cli(card(*crit))
+            r = checks.validate(card(*crit), Spy(), config=TestTwoLevels.CFG)
+            self.assertEqual((out["action"], out["invoke_llm"]),
+                             (r["action"], r["invoke_llm"]), crit)
+
+    def test_invalid_model_exit_3(self):
+        code, out, err, _ = self.run_cli(card("`true` → exit 0"), {"model": "gpt"})
+        self.assertEqual(code, 3)
+        self.assertIsNone(out)
+        self.assertIn("gpt", err)
+        self.assertNotIn("Traceback", err)
 
 
 if __name__ == "__main__":

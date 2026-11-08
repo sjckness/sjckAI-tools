@@ -4,6 +4,7 @@ description: Scompone una task grande in un DAG di nodi con card e criteri di ac
 tools: Read, Grep, Glob, Write
 model: opus
 effort: high
+omitClaudeMd: true
 ---
 Ricevi un obiettivo. Esplora il repo quanto serve, poi produci:
 
@@ -20,8 +21,10 @@ Regole del DAG:
 - I nodi senza dipendenze reciproche devono avere `files` DISGIUNTI.
 - Se più nodi usano la stessa API, crea prima un nodo `sjck-scout` che la
   estrae in .sjck/interfaces/<nome>.md, e fai dipendere gli altri da lui.
-- Ogni card ha criteri di accettazione verificabili (comando + esito
-  atteso, oppure una condizione controllabile sul diff).
+- Ogni card ha criteri di accettazione verificabili. Quelli eseguibili si
+  scrivono `comando -> esito atteso` (es. `python3 -m unittest discover -s tests -> exit 0`):
+  li esegue lo script `checks.py` senza LLM. Le condizioni solo controllabili
+  sul diff restano in prosa (le giudica il validatore LLM).
 - La card contiene SOLO il contesto necessario a quel nodo.
 - Massimizza la larghezza del grafo: dipendenze solo dove sono reali.
 - Decidi e annota: se una scelta ha un default ragionevole, prendilo e

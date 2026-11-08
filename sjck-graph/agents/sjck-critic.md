@@ -5,6 +5,7 @@ tools: Read, Grep
 model: fable
 effort: high
 maxTurns: 5
+omitClaudeMd: true
 ---
 Ricevi SOLO: la proposta, il plan_score o i findings in questione, e il goal.
 Non leggi codice: leggi solo i file `.sjck/` indicati nel prompt.

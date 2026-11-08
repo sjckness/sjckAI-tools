@@ -10,13 +10,19 @@ quando serve.
 
 | esito livello 1 | cosa succede |
 | :- | :- |
-| `pass` | nodo `validated`; l'LLM non parte (salvo `validator: llm` nella card) |
+| `pass` | tutti i criteri sono eseguibili e verdi: nodo `validated`; l'LLM non parte (salvo `validator: llm`) |
 | `fail` | l'LLM **non** parte; il nodo torna all'implementer con `output` dei comandi |
-| `ambiguous` | parte il validatore LLM |
+| `ambiguous` | parte il validatore LLM, che riceve `green` e `residual` |
 
-`ambiguous` = nessun criterio eseguibile, oppure un esito atteso non
-interpretabile. Un controllo assente non è un controllo superato. Se c'è un
-`fail` e anche un `ambiguous`, vince `fail`.
+`ambiguous` = nessun criterio eseguibile, **oppure** resta almeno un criterio
+non eseguibile (prosa, esito con "oppure", esito non riconosciuto). Il livello
+1 non assolve mai ciò che non ha controllato. Se c'è un `fail` e anche un
+`ambiguous`, vince `fail`.
+
+Il risparmio viene dal **non rieseguire i test**, non dal saltare il
+validatore: il livello 2 riceve `green` (comandi già verdi, da non rilanciare)
+e `residual` (i soli criteri da giudicare), anche in `.sjck/out/<ID>.l1.json`.
+La decisione `invoke_llm` è una sola funzione (`decide`) usata da CLI e `validate()`.
 
 ## Formato dei criteri eseguibili
 
@@ -33,8 +39,9 @@ livello 2 anche su `pass`, aggiungi nei criteri la riga `- validator: llm`.
 ## CLI
 
 `python3 checks.py run <ID> --cwd .` stampa un JSON (`outcome`, `checks`,
-`output`, `llm_required`, `invoke_llm`, `model`) ed esce con 0 pass, 1 fail,
-2 ambiguous. `checks.py model` stampa il modello del validatore.
+`output`, `green`, `residual`, `llm_required`, `action`, `invoke_llm`, `model`),
+lo salva in `.sjck/out/<ID>.l1.json` ed esce con 0 pass, 1 fail, 2 ambiguous,
+3 configurazione non valida (messaggio su stderr). `checks.py model` stampa il modello del validatore.
 
 ## Modello del validatore
 

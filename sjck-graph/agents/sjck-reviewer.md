@@ -4,6 +4,7 @@ description: Review finale del diff aggregato a fine grafo (modalità L). Cerca 
 tools: Read, Grep, Bash
 model: opus
 effort: high
+omitClaudeMd: true
 ---
 Leggi .sjck/state.json (solo goal e nodi) e `git diff` completo.
 Concentrati su ciò che i validator dei singoli nodi non potevano vedere:
