@@ -13,12 +13,19 @@ Il livello 1 NON assolve mai cio' che non ha controllato: se resta anche
 un solo criterio non eseguibile l'esito e' `ambiguous`; il livello 2 riceve
 `green` (comandi gia' verdi, da non rieseguire) e `residual` (da giudicare).
 
+Scope-check (F016): il livello 1 confronta il diff (`git diff --name-only HEAD`
+piu' i file non tracciati, rilevati PRIMA di eseguire i comandi) con i percorsi
+di `## Puoi modificare`. Se il diff tocca altro l'esito diventa `ambiguous`
+(mai `fail`: non e' un criterio fallito) e il livello 2 giudica lo scope.
+Senza sezione `Puoi modificare` o fuori da un repo git il controllo non si applica.
+
 Uso:  checks.py run <ID> [--cwd DIR]   -> JSON (+ .sjck/out/<ID>.l1.json);
                                           exit 0 pass, 1 fail, 2 ambiguous,
                                           3 configurazione non valida
       checks.py model [--cwd DIR]      -> modello del validatore LLM
 """
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -31,6 +38,8 @@ sys.path.insert(0, HERE)
 import cards  # noqa: E402
 
 DEFAULT_CONFIG = os.path.join(HERE, "..", "config", "validation.json")
+# Default interno: usato se il file versionato manca (installazione incompleta).
+BUILTIN_CONFIG = {"model": "sonnet", "timeout": 600}
 MODELS = ("haiku", "sonnet", "opus", "fable", "inherit")
 _CRIT = re.compile(r"^\**`([^`]+)`\**\s*(?:→|->)\s*(.*)$")
 _EXIT = re.compile(r"\bexit(?:\s+code)?\s*(\d+)", re.I)
@@ -41,8 +50,11 @@ _TAIL = 4000
 
 def load_config(cwd="."):
     """Default versionato + override `.sjck/validation.json` (vince)."""
-    with open(DEFAULT_CONFIG, encoding="utf-8") as f:
-        cfg = json.load(f)
+    try:
+        with open(DEFAULT_CONFIG, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except FileNotFoundError:
+        cfg = dict(BUILTIN_CONFIG)
     over = os.path.join(cwd, ".sjck", "validation.json")
     if os.path.isfile(over):
         with open(over, encoding="utf-8") as f:
@@ -82,6 +94,53 @@ def requires_llm(card_text):
     return bool(_LLM.search(body))
 
 
+def allowed_paths(card_text):
+    """Percorsi di `## Puoi modificare` (tutti i `...` di ogni voce; se una voce
+    non ha backtick, la sua prima parola). Parsing delle sezioni: cards.py."""
+    out = []
+    for item in cards.section_items(card_text, "Puoi modificare"):
+        toks = re.findall(r"`([^`]+)`", item) or [(item.split() or [""])[0]]
+        out += [t.strip().rstrip(".,;:)") for t in toks if t.strip()]
+    return [p for p in out if p]
+
+
+def _in_scope(path, allowed):
+    for a in allowed:
+        a = a[2:] if a.startswith("./") else a
+        if path == a or fnmatch.fnmatch(path, a):
+            return True
+        if path.startswith(a.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def changed_files(cwd="."):
+    """File modificati o nuovi nel working tree, o None se non e' un repo git."""
+    def git(*args):
+        p = subprocess.run(("git",) + args, cwd=cwd, stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, universal_newlines=True)
+        return p.stdout.splitlines() if p.returncode == 0 else None
+    try:
+        tracked = git("diff", "--name-only", "HEAD")
+        if tracked is None:
+            tracked = git("diff", "--name-only")
+        new = git("ls-files", "--others", "--exclude-standard")
+    except OSError:
+        return None
+    if tracked is None or new is None:
+        return None
+    return sorted(set(tracked + new))
+
+
+def out_of_scope(card_text, cwd="."):
+    """File del diff non permessi dalla card (ignora .sjck/); [] se non verificabile."""
+    allowed = allowed_paths(card_text)
+    changed = changed_files(cwd) if allowed else None
+    if not changed:
+        return []
+    return [f for f in changed if not f.startswith(".sjck/") and not _in_scope(f, allowed)]
+
+
 def decide(res):
     """Unica decisione livello 1 -> livello 2: (action, invoke_llm).
     fail -> mai LLM; ambiguous o card che lo richiede -> LLM; altrimenti done."""
@@ -98,6 +157,10 @@ def run_checks(card_text, cwd=".", timeout=600):
     found, other = parse_checks(card_text)
     results, output, green = [], [], []
     residual = list(other)
+    stray = out_of_scope(card_text, cwd)  # prima dei comandi: sono il lavoro del nodo
+    if stray:
+        residual.append("scope: il diff tocca file fuori da `## Puoi modificare`: "
+                        + ", ".join(stray))
     for c in found:
         r = {"name": c["command"], "expect": c["expect"]}
         if c["exit"] is None:
@@ -125,7 +188,7 @@ def run_checks(card_text, cwd=".", timeout=600):
     else:
         outcome = "pass"
     return {"outcome": outcome, "checks": results, "output": "\n\n".join(output),
-            "green": green, "residual": residual,
+            "green": green, "residual": residual, "out_of_scope": stray,
             "llm_required": requires_llm(card_text)}
 
 

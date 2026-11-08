@@ -72,5 +72,71 @@ class PromptOrder(unittest.TestCase):
             self.assertLess(p.index("FUORI"), p.index("BUDGET"))
 
 
+class CardsCli(unittest.TestCase):
+    CARD = ("# T9\n## Obiettivo\nlungo testo\n## Puoi modificare\n- `a.py`\n"
+            "## Criteri di accettazione\n- `true` -> exit 0\n## Fuori scope\n- x\n")
+
+    def setUp(self):
+        import io
+        import json
+        import contextlib
+        self.io, self.json, self.cl = io, json, contextlib
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, self.d, True)
+        os.makedirs(os.path.join(self.d, ".sjck", "cards"))
+        with open(os.path.join(self.d, ".sjck", "cards", "T9.md"), "w") as f:
+            f.write(self.CARD)
+        st = {"nodes": [{"id": "T9", "deps": ["T8"], "status": "running", "files": ["a.py"]},
+                        {"id": "T8", "status": "validated", "files": ["b.py"], "summary": "x"},
+                        {"id": "T1", "status": "validated"}]}
+        with open(os.path.join(self.d, ".sjck", "state.json"), "w") as f:
+            json.dump(st, f)
+
+    def run_cli(self, *argv):
+        out = self.io.StringIO()
+        with self.cl.redirect_stdout(out):
+            code = cards.main(list(argv))
+        return code, out.getvalue()
+
+    def test_sections_writes_reduced_card(self):
+        code, out = self.run_cli("sections", "T9", "--cwd", self.d)
+        self.assertEqual(code, 0)
+        dest = os.path.join(self.d, ".sjck", "out", "T9.card.md")
+        self.assertEqual(out.strip(), dest)
+        with open(dest) as f:
+            txt = f.read()
+        self.assertIn("## Criteri di accettazione", txt)
+        self.assertNotIn("Obiettivo", txt)
+
+    def test_state_slice(self):
+        code, out = self.run_cli("state", "T9", "--cwd", self.d)
+        self.assertEqual(code, 0)
+        ids = [n["id"] for n in self.json.loads(out)["nodes"]]
+        self.assertEqual(ids, ["T9", "T8"])
+
+    def test_prompt_order(self):
+        fs = {}
+        for k, v in (("system", "SYS"), ("fuori", "OUT"), ("budget", "BUD"), ("card", "CARD"), ("corr", "COR")):
+            fs[k] = os.path.join(self.d, k)
+            with open(fs[k], "w") as f:
+                f.write(v)
+        code, out = self.run_cli("prompt", "--system", fs["system"], "--fuori-scope", fs["fuori"],
+                                 "--budget", fs["budget"], "--card", fs["card"],
+                                 "--correzioni", fs["corr"])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.split(), ["SYS", "OUT", "BUD", "CARD", "COR"])
+
+    def test_missing_card_exit_1(self):
+        err = self.io.StringIO()
+        with self.cl.redirect_stderr(err):
+            code, _ = self.run_cli("sections", "NOPE", "--cwd", self.d)
+        self.assertEqual(code, 1)
+
+    def test_help_exit_0(self):
+        with self.assertRaises(SystemExit) as cm, self.cl.redirect_stdout(self.io.StringIO()):
+            cards.main(["--help"])
+        self.assertEqual(cm.exception.code, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

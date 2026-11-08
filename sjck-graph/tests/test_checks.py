@@ -10,6 +10,7 @@ SCRIPTS = os.path.join(HERE, "..", "scripts")
 sys.path.insert(0, SCRIPTS)
 
 import checks  # noqa: E402
+import tokens  # noqa: E402
 
 
 def card(*crit):
@@ -217,6 +218,103 @@ class TestCli(unittest.TestCase):
         self.assertIsNone(out)
         self.assertIn("gpt", err)
         self.assertNotIn("Traceback", err)
+
+
+def scoped_card(allowed, *crit):
+    return ("# T\n## Obiettivo\nx\n## Puoi modificare\n" + "".join("- %s\n" % a for a in allowed)
+            + "## Criteri di accettazione\n" + "".join("- %s\n" % c for c in crit)
+            + "## Fuori scope\n-\n")
+
+
+class TestScope(unittest.TestCase):
+    """F016: il livello 1 non puo' validare un nodo che scrive fuori scope."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, self.d, True)
+        for args in (["init", "-q"], ["config", "user.email", "a@b"], ["config", "user.name", "t"]):
+            subprocess.run(["git"] + args, cwd=self.d, check=True)
+        for n in ("ok.py", "other.py"):
+            with open(os.path.join(self.d, n), "w") as f:
+                f.write("1\n")
+        subprocess.run(["git", "add", "."], cwd=self.d, check=True)
+        subprocess.run(["git", "commit", "-qm", "i"], cwd=self.d, check=True)
+
+    def write(self, name, text="2\n"):
+        with open(os.path.join(self.d, name), "w") as f:
+            f.write(text)
+
+    def test_in_scope_unchanged(self):
+        self.write("ok.py")
+        self.write("new.py")  # non tracciato ma permesso
+        c = scoped_card(["`ok.py`, `new.py`"], "`true` -> exit 0")
+        r = checks.run_checks(c, self.d)
+        self.assertEqual(r["outcome"], "pass")
+        self.assertEqual(r["out_of_scope"], [])
+        self.assertEqual(checks.decide(r), ("done", False))
+
+    def test_out_of_scope_tracked_is_ambiguous_even_if_green(self):
+        self.write("ok.py")
+        self.write("other.py")
+        r = checks.run_checks(scoped_card(["`ok.py`"], "`true` -> exit 0"), self.d)
+        self.assertEqual(r["green"], ["true"])
+        self.assertEqual(r["outcome"], "ambiguous")
+        self.assertEqual(r["out_of_scope"], ["other.py"])
+        self.assertTrue(any("other.py" in x for x in r["residual"]))
+        self.assertEqual(checks.decide(r), ("llm", True))
+
+    def test_out_of_scope_untracked_is_ambiguous(self):
+        self.write("stray.py")
+        r = checks.run_checks(scoped_card(["`ok.py`"], "`true` -> exit 0"), self.d)
+        self.assertEqual(r["outcome"], "ambiguous")
+        self.assertTrue(checks.decide(r)[1])
+
+    def test_validate_calls_llm_on_stray_file(self):
+        self.write("stray.py")
+        spy = Spy("fail")
+        r = checks.validate(scoped_card(["`ok.py`"], "`true` -> exit 0"), spy, self.d,
+                            config={"model": "haiku", "timeout": 60})
+        self.assertEqual(len(spy.calls), 1)
+        self.assertEqual(r["verdict"], "fail")
+
+    def test_failing_command_stays_fail(self):
+        self.write("stray.py")
+        r = checks.run_checks(scoped_card(["`ok.py`"], "`false` -> exit 0"), self.d)
+        self.assertEqual(r["outcome"], "fail")
+        self.assertEqual(checks.decide(r), ("retry", False))
+
+    def test_directory_entry_allows_children(self):
+        os.makedirs(os.path.join(self.d, "sub"))
+        self.write("sub/x.py")
+        r = checks.run_checks(scoped_card(["`sub/`"], "`true` -> exit 0"), self.d)
+        self.assertEqual(r["outcome"], "pass")
+
+    def test_sjck_dir_ignored(self):
+        os.makedirs(os.path.join(self.d, ".sjck", "out"))
+        self.write(".sjck/out/T.json")
+        r = checks.run_checks(scoped_card(["`ok.py`"], "`true` -> exit 0"), self.d)
+        self.assertEqual(r["outcome"], "pass")
+
+
+class TestMissingConfig(unittest.TestCase):
+    """F014: senza config/ l'installazione degrada, non azzera i costi."""
+
+    def test_load_prices_not_empty(self):
+        orig = tokens.prices_default_path
+        tokens.prices_default_path = lambda: "/nonexistent/config/prices.json"
+        self.addCleanup(setattr, tokens, "prices_default_path", orig)
+        p = tokens.load_prices()
+        self.assertTrue(p["models"])
+        usd = tokens.estimate_usd(p, "claude-opus-4-5", {"input": 1000000})
+        self.assertIsNotNone(usd)
+        self.assertAlmostEqual(usd, 5.0)
+
+    def test_load_config_default(self):
+        orig = checks.DEFAULT_CONFIG
+        checks.DEFAULT_CONFIG = "/nonexistent/config/validation.json"
+        self.addCleanup(setattr, checks, "DEFAULT_CONFIG", orig)
+        cfg = checks.load_config(tempfile.mkdtemp())
+        self.assertIn(cfg["model"], checks.MODELS)
 
 
 if __name__ == "__main__":

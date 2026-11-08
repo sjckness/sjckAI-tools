@@ -24,6 +24,15 @@ validatore: il livello 2 riceve `green` (comandi già verdi, da non rilanciare)
 e `residual` (i soli criteri da giudicare), anche in `.sjck/out/<ID>.l1.json`.
 La decisione `invoke_llm` è una sola funzione (`decide`) usata da CLI e `validate()`.
 
+**Scope-check.** Il livello 1 confronta `git diff --name-only HEAD` (più i file
+non tracciati, letti prima di eseguire i comandi; `.sjck/` ignorata) con i
+percorsi di `## Puoi modificare`. Se il diff tocca altro, l'esito diventa
+`ambiguous` anche con tutti i comandi verdi (mai `fail`: non è un criterio della
+card), `out_of_scope` elenca i file, `residual` ne dà la voce `scope:` e parte il
+livello 2. Il controllo non si applica senza la sezione `Puoi modificare` o fuori
+da un repo git. Con nodi paralleli sullo stesso working tree il diff include anche
+i file degli altri nodi: l'esito è più prudente (`ambiguous`), mai più permissivo.
+
 ## Formato dei criteri eseguibili
 
 ```
@@ -49,3 +58,11 @@ lo salva in `.sjck/out/<ID>.l1.json` ed esce con 0 pass, 1 fail, 2 ambiguous,
 nel progetto lo sovrascrive (chiavi: `model`, `timeout`). `model` ∈
 haiku|sonnet|opus|fable|inherit; un modello più piccolo (`haiku`) è ammesso.
 L'orchestratore lo passa come override al lancio del validatore.
+Il `model:` nel frontmatter di `sjck-validator.md` è solo il **fallback**: se
+l'orchestratore non passa l'override, vince il frontmatter e la configurazione
+(`config/validation.json`, `.sjck/validation.json`) **non ha effetto**. Vale per le
+modalità S, M e L. `validate()` è un helper per i test e `checks.py model` un
+comando diagnostico: il contratto unico resta `decide()` via `checks.py run`.
+Senza `config/` (installazione incompleta) `load_config` usa un default interno
+(`sonnet`, timeout 600); `install.sh` copia `config/` in `<DEST>/config/`.
+

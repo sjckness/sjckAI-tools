@@ -19,7 +19,7 @@ prompt dell'agente e CLAUDE.md.
 
 L'orchestratore legge solo stato e out JSON
 (`sjck-graph/skills/sjck-orchestration/SKILL.md:7`, regola ferrea in
-`sjck-graph/skills/sjck-orchestration/SKILL.md:154`) e il risparmio è già
+`sjck-graph/skills/sjck-orchestration/SKILL.md:177`) e il risparmio è già
 misurato come insight `contract`
 (`sjck-graph/scripts/tokens.py:607`). Il costo si concentra quindi nei
 subagenti, e lì il moltiplicatore è il numero di lanci: un validator per ogni
@@ -169,10 +169,10 @@ Limiti noti:
   invariata per scelta** in fase di piano: il percorso del costo USD è offline e
   non la chiama (`sjck-graph/scripts/tokens.py:371`). Resta una tensione
   dichiarata, non risolta.
-- **F005** (`sjck-graph/scripts/tokens.py:570`): conseguenza della stessa
+- **F005** (`sjck-graph/scripts/tokens.py:581`): conseguenza della stessa
   scelta — i costi stimati sono solo in USD, senza `cost_eur`; l'EUR esiste solo
   sul percorso `cost-state`.
-- **F001** (`sjck-graph/scripts/tokens.py:477`): `build()` riparsa tutti i
+- **F001** (`sjck-graph/scripts/tokens.py:580`): `build()` riparsa tutti i
   transcript a ogni hook, con timeout 15 s. P1 non aggiunge parse (è
   O(token già aggregati)), ma su un run lungo le misure di costo possono
   perdersi in silenzio.
@@ -182,6 +182,11 @@ Limiti noti:
 - **F010** (`sjck-graph/scripts/watchdog.py`): `watchdog.py usage` sottostima i
   tool call (su T03: 5 contro 10 reali; su T02: 2 contro 11). Rilevante proprio
   qui: i budget per nodo e `metrics.tool_calls` non sono una misura affidabile.
+- Il `.sjck/tokens.json` vivo di questo run è stato scritto dalla `tokens.py`
+  **installata** (vecchia): non ha `by_agent` né `by_node[].cost_usd`, e ha
+  `models` a interi. Il percorso dell'hook esercita il plugin installato, non il
+  codice del repo, finché il plugin non viene aggiornato; fino ad allora i
+  `cost_usd` citati in `SKILL.md` non sono disponibili su questo run.
 - Forma di `tokens.json` cambiata (`by_node[].models` è un dict): nessun
   consumatore noto lo legge, i file vecchi restano leggibili.
 
@@ -268,19 +273,28 @@ Limiti noti:
   arbitrari, come già faceva l'implementer.
 - Exit 3 (config non valida) va segnalato all'utente: non è un `fail` del nodo e
   non deve sbloccarlo.
+- **Scope-check (F016).** Sul ramo `done` il livello 1 chiudeva il nodo
+  `validated` senza guardare il diff: il controllo di scope che prima faceva il
+  validatore LLM era perso, quindi un nodo poteva scrivere fuori dai suoi file
+  restando verde. Ripristinato in `checks.py`: `git diff --name-only HEAD` più i
+  file non tracciati contro `## Puoi modificare`; se esce dallo scope l'esito
+  degrada a `ambiguous` (mai `fail`) e parte il livello 2. Non si applica senza
+  la sezione o fuori da un repo git; il controllo di regressioni (stub, TODO,
+  test disattivati) resta solo al livello 2, quindi non è coperto sul ramo `done`.
 - **F008** (`sjck-graph/tests/test_install.py`): ogni `unittest discover` di
   questo run ha toccato l'installazione reale della macchina (stampa
   `VS Code extension (code): ok`). Preesistente e fuori rubrica.
 
 ## Altri sprechi
 
-Trovati ma **non** implementati (fuori dalla rubrica P1-P3).
+Trovati ma **non** implementati (fuori dalla rubrica P1-P3), salvo il punto 4,
+chiuso da P1.
 
 1. **`build` rilegge tutti i transcript a ogni hook.** `tokens.py --hook` gira
    su ogni `Stop` e `SubagentStop`
    (`sjck-graph/hooks/hooks.json:54`, `sjck-graph/hooks/hooks.json:65`) e
    `build` riparte da zero su tutte le fonti registrate
-   (`sjck-graph/scripts/tokens.py:477`). Il costo cresce col quadrato della
+   (`sjck-graph/scripts/tokens.py:580`). Il costo cresce col quadrato della
    lunghezza del run; col timeout di 15 s
    (`sjck-graph/hooks/hooks.json:55`) un run lungo perde silenziosamente le
    misure. Rimedio: cache per fonte con `mtime`/offset.
@@ -295,15 +309,12 @@ Trovati ma **non** implementati (fuori dalla rubrica P1-P3).
    `sjck-graph/agents/sjck-reviewer.md:5`): su un DAG largo è il singolo
    contesto più grande del run. Rimedio: diff per file o solo i file toccati
    da più nodi.
-4. **Forma incoerente di `models`.** `parse_transcript` restituisce un dict
-   per modello (`sjck-graph/scripts/tokens.py:340`), mentre `build` lo
-   appiattisce a interi in `by_node[].models`
-   (`sjck-graph/scripts/tokens.py:503`): chi consuma `tokens.json` deve
-   gestire due forme, e il costo per modello per nodo non è ricostruibile.
+4. **Forma incoerente di `models`: chiuso da P1.** `by_node[].models` ora è un
+   dict per modello, come in `parse_transcript` (vedi sezione P1 e CHANGELOG).
 5. **`graph_view.py` rigenerato a ogni Write/Edit**
    (`sjck-graph/hooks/hooks.json:21`) e di nuovo dentro `refresh`, ma solo se il
    viewer esiste già: il render è dietro la guardia
-   `if os.path.exists(".sjck/view.html")` (`sjck-graph/scripts/tokens.py:741`).
+   `if os.path.exists(".sjck/view.html")` (`sjck-graph/scripts/tokens.py:752`).
    Nessun token, ma latenza su ogni tool call che scrive.
 6. **`validate` ignora i campi sconosciuti**
    (`sjck-graph/scripts/state_schema.py:168`): campi nuovi (per esempio un

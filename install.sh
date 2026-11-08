@@ -44,6 +44,10 @@ for plugin in sjck-graph sjck-onboard; do
   if [[ -d "$src/scripts" ]]; then
     for f in "$src/scripts"/*; do [[ -f "$f" ]] && copy "$f" "$DEST/sjck-scripts/$(basename "$f")"; done
   fi
+  # config/ e' sorella di sjck-scripts: gli script la cercano in HERE/../config
+  if [[ -d "$src/config" ]]; then
+    for f in "$src/config"/*; do [[ -f "$f" ]] && copy "$f" "$DEST/config/$(basename "$f")"; done
+  fi
 done
 
 echo "sjck installato in $DEST"

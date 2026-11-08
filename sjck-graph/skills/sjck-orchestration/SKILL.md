@@ -52,8 +52,8 @@ Stima con al massimo 3 chiamate Grep/Glob, senza leggere file interi.
 
 | Modalità | Quando | Come |
 |---|---|---|
-| S — inline | ≤3 file, un solo concern, nessuna incognita | Fai tu la task. Poi UN `sjck-validator` (salta solo per typo, rename, config di 1 riga). |
-| M — catena | 2-4 step sequenziali, o serve esplorare prima | Card scritte da te: scout → implementer → validator. Niente planner. |
+| S — inline | ≤3 file, un solo concern, nessuna incognita | Fai tu la task. Poi livello 1 (`checks.py run`, passo 4) e, se `llm`, UN `sjck-validator` con override modello (salta solo per typo, rename, config di 1 riga). |
+| M — catena | 2-4 step sequenziali, o serve esplorare prima | Card scritte da te: scout → implementer → livello 1 (`checks.py run`) → validator se `llm`, con override modello. Niente planner. |
 | L — DAG | ≥2 sottoparti indipendenti, >5 file o più package | planner → DAG → nodi paralleli, validator dopo OGNI nodo. |
 
 Se la task è grande e vaga (obiettivo poco chiaro, nessun modo evidente di
@@ -140,16 +140,16 @@ oppure c'è stallo (nessun nodo running né pronto → chiedi all'utente):
    sono correzioni, non si registrano.
 4. Livello 1, deterministico (docs/validation.md): `python3 "<script>/checks.py" run <ID> --cwd "$PWD"`
    — JSON su stdout e in `.sjck/out/<ID>.l1.json`. Agisci sul campo `action`:
-   - `done` → `validated` senza validator LLM (riga nel log);
+   - `done` → `validated` senza validator LLM (riga nel log); il livello 1 controlla lo scope sul diff e se esce da "Puoi modificare" dà `llm`;
    - `retry` → NON lanciare il validator: appendi `output` nella card sotto "Correzioni richieste" e vai al ramo `fail` qui sotto;
    - `llm` → lancia `sjck-validator` sull'ID con override di modello = campo `model` del
      JSON (`config/validation.json`, override `.sjck/validation.json`): legge
      `.sjck/out/<ID>.l1.json`, NON riesegue i comandi in `green`, giudica solo `residual`,
      scope e regressioni.
    Exit 3 = config non valida: dillo all'utente e correggila, non è un `fail` del nodo.
-   Al validator passa la card ridotta (`cards.select_sections`: "Puoi modificare",
-   "Leggi", "Criteri di accettazione", "Fuori scope") e solo la fetta di stato del nodo
-   e delle sue deps (`cards.select_state`). Esito in .sjck/out/<ID>.val.json:
+   Al validator: card ridotta con `python3 "<script>/cards.py" sections <ID>` (scrive `.sjck/out/<ID>.card.md`:
+   Puoi modificare, Leggi, Criteri, Fuori scope; il validator legge QUELLO, non la card intera) e fetta di stato
+   con `cards.py state <ID>` (nodo + deps). Esito in .sjck/out/<ID>.val.json:
    - `pass` → `validated`
    - `fail`, `attempts < 2` → findings nella card sotto "Correzioni richieste",
      attempts += 1, riprendi lo STESSO implementer con SendMessage → `running`

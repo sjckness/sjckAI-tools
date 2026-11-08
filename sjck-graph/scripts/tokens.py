@@ -442,9 +442,20 @@ def _merge_prices(base, over):
     return out
 
 
+# Default interno (specchio di config/prices.json): se il file versionato manca
+# l'installazione degrada, non azzera i costi in silenzio.
+BUILTIN_PRICES = {
+    "multipliers": {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_creation": 1.25},
+    "models": {"default": {"input_per_mtok": 3.0}, "opus": {"input_per_mtok": 5.0},
+               "sonnet": {"input_per_mtok": 3.0}, "haiku": {"input_per_mtok": 1.0}},
+}
+
+
 def load_prices(root=None):
     """Prezzi: default versionati (config/prices.json) + override <root>/.sjck/prices.json."""
     base = read_json(prices_default_path(), {})
+    if not isinstance(base, dict) or not base.get("models"):
+        base = BUILTIN_PRICES
     over = read_json(os.path.join(root, ".sjck", "prices.json"), {}) if root else {}
     return _merge_prices(base if isinstance(base, dict) else {}, over)
 

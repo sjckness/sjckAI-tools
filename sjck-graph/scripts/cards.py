@@ -1,5 +1,16 @@
-"""Parser delle card .sjck/cards/<ID>.md. Solo standard library."""
+"""Parser delle card .sjck/cards/<ID>.md. Solo standard library.
+
+CLI (l'orchestratore lavora da Bash):
+  cards.py sections <ID> [--cwd D] [--wanted "A,B"]  scrive la card ridotta in
+                                  .sjck/out/<ID>.card.md e ne stampa il percorso
+  cards.py state <ID> [--cwd D]   fetta di .sjck/state.json (nodo + deps), JSON
+  cards.py prompt --system F --fuori-scope F --budget F --card F [--correzioni F]
+"""
+import argparse
+import json
+import os
 import re
+import sys
 
 SECTIONS = ("Obiettivo", "Puoi modificare", "Leggi",
             "Criteri di accettazione", "Fuori scope", "Correzioni richieste")
@@ -95,3 +106,53 @@ def build_prompt(system, fuori_scope, budget, card, correzioni=""):
     Le prime tre parti non dipendono dal nodo ne' dal tentativo."""
     parts = [system, fuori_scope, budget, card, correzioni]
     return "\n\n".join(p.strip("\n") for p in parts if p and p.strip()) + "\n"
+
+
+DIET_SECTIONS = ("Puoi modificare", "Leggi", "Criteri di accettazione", "Fuori scope")
+
+
+def _read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Card ridotte, stato selettivo, prompt ordinato")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    a = sub.add_parser("sections")
+    a.add_argument("id")
+    a.add_argument("--cwd", default=".")
+    a.add_argument("--wanted", default=",".join(DIET_SECTIONS))
+    b = sub.add_parser("state")
+    b.add_argument("id")
+    b.add_argument("--cwd", default=".")
+    c = sub.add_parser("prompt")
+    for k in ("system", "fuori-scope", "budget", "card"):
+        c.add_argument("--" + k, required=True)
+    c.add_argument("--correzioni")
+    n = ap.parse_args(argv)
+    try:
+        if n.cmd == "sections":
+            text = _read(os.path.join(n.cwd, ".sjck", "cards", n.id + ".md"))
+            wanted = [w.strip() for w in n.wanted.split(",") if w.strip()]
+            out = os.path.join(n.cwd, ".sjck", "out")
+            os.makedirs(out, exist_ok=True)
+            dest = os.path.join(out, n.id + ".card.md")
+            with open(dest, "w", encoding="utf-8") as f:
+                f.write(select_sections(text, wanted))
+            print(dest)
+        elif n.cmd == "state":
+            state = json.loads(_read(os.path.join(n.cwd, ".sjck", "state.json")))
+            print(json.dumps(select_state(state, n.id), ensure_ascii=False))
+        else:
+            corr = _read(n.correzioni) if n.correzioni else ""
+            sys.stdout.write(build_prompt(_read(n.system), _read(n.fuori_scope),
+                                          _read(n.budget), _read(n.card), corr))
+    except (OSError, ValueError) as e:
+        print("cards.py: %s" % e, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

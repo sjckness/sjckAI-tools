@@ -44,6 +44,7 @@ class TestInstall(unittest.TestCase):
             "commands/c.md": "cmd\n",
             "skills/s/SKILL.md": "run ${CLAUDE_PLUGIN_ROOT}/scripts/x.py\n",
             "scripts/x.py": "print(1)\n",
+            "config/prices.json": "{}\n",
         }
         if pycache:
             files["scripts/__pycache__/x.cpython-39.pyc"] = "junk"
@@ -83,6 +84,13 @@ class TestInstall(unittest.TestCase):
         self.assertIn("/.claude/sjck-scripts/x.py", txt)
         self.assertTrue(any(w.endswith("/.claude/sjck-scripts/x.py") for w in txt.split()), txt)
         self.assertTrue(os.path.isabs(txt.split()[1]), txt)
+
+    def test_copies_config(self):
+        """F014: config/ va in $DEST/config, sorella di sjck-scripts (HERE/../config)."""
+        self.make_tgz(False)
+        p = self.install()
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertTrue(os.path.isfile(os.path.join(self.proj, ".claude", "config", "prices.json")))
 
     def test_reinstall_no_bak(self):
         self.make_tgz(False)
