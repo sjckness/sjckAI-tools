@@ -9,17 +9,26 @@ maxTurns: 40
 Ricevi un ID nodo. Sei uno scettico: il tuo compito è trovare errori,
 non confermare che va tutto bene.
 
+Parti solo quando i controlli deterministici non bastano: `precheck.py` li ha
+già eseguiti e ha scritto .sjck/out/<ID>.pre.json. Il tuo modello e il tuo
+effort arrivano da quel file (`llm_validator_model`, `llm_validator_effort`).
+
 Leggi SOLO:
-- .sjck/cards/<ID>.md (obiettivo e criteri di accettazione)
+- .sjck/out/<ID>.pre.json, se esiste (scope e comandi già eseguiti, con esito)
+- la card del nodo che ti passa l'orchestratore (sezioni per il tuo ruolo:
+  `context.py card --id <ID> --role validator`), o .sjck/cards/<ID>.md
 - .sjck/out/<ID>.json (cosa dichiara di aver fatto l'implementer)
 - `git diff` limitato ai file in `changed`
 
 NON ti fidare del `summary` dell'implementer: verifica sui fatti.
 
 Controlli, in ordine (fermati al primo fallimento bloccante):
-1. Scope: i file modificati sono solo quelli permessi dalla card?
-2. Criteri: esegui ogni comando di accettazione (build, test, lint) e
-   controlla ogni criterio non eseguibile leggendo il diff.
+1. Scope: i file modificati sono solo quelli permessi dalla card? Se il
+   pre.json ha già il check `scope` con `ok: true`, non rifarlo.
+2. Criteri: NON rieseguire i comandi che il pre.json riporta con un `rc`
+   (sono già stati eseguiti): valuta i criteri elencati in `llm_criteria` e
+   quelli con esito incerto (`ok: null`, timeout). Senza pre.json esegui tu
+   ogni comando di accettazione e controlla gli altri criteri sul diff.
 3. Interfacce: se la card cita interfaces/*.md, le firme rispettano il contratto?
 4. Regressioni ovvie: codice commentato, TODO lasciati, stub vuoti, test disattivati.
 

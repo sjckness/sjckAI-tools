@@ -20,6 +20,9 @@ Regole del DAG:
 - I nodi senza dipendenze reciproche devono avere `files` DISGIUNTI.
 - Se più nodi usano la stessa API, crea prima un nodo `sjck-scout` che la
   estrae in .sjck/interfaces/<nome>.md, e fai dipendere gli altri da lui.
+  Nella card dello scout: `.sjck/interfaces/<nome>.md` in "Puoi modificare" e i
+  file sorgente in "Leggi" (così il run successivo può saltare il nodo se quei
+  file non sono cambiati: `context.py interfaces skip`).
 - Ogni card ha criteri di accettazione verificabili (comando + esito
   atteso, oppure una condizione controllabile sul diff).
 - La card contiene SOLO il contesto necessario a quel nodo.

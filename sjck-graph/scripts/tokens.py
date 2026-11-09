@@ -26,6 +26,11 @@ contro l'evento `cost-state` (totali scritti da Claude Code stesso):
     (stimato dalla lunghezza della `signature`, perché il testo è oscurato);
   - gli eventi `api-request-blob` sono copie dei messaggi e si saltano;
   - `cost-state` dà il costo reale in USD, ripartito sui nodi.
+Senza `cost-state` (run in corso) il costo si STIMA dal listino prezzi
+(`scripts/prices.json`, override in `.sjck/prices.json`: vedi config.py) ed è
+marcato `estimated: true`; cache read e cache write usano i moltiplicatori
+rispetto all'input. Un modello senza prezzo finisce in `unpriced_models` e per
+lui si mostrano solo i token.
 Le categorie di contesto (card, interfacce, file nella card / fuori card,
 output dei tool, messaggi dei subagenti, thinking, reminder, system) sono
 STIMATE: il contesto si ricostruisce blocco per blocco, il fattore caratteri→
@@ -46,6 +51,10 @@ import json
 import os
 import sys
 import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import config  # noqa: E402
 
 KEYS = ("input", "output", "cache_read", "cache_creation")
 USAGE_FIELDS = {
@@ -474,6 +483,10 @@ def build(root):
     totals = {k: 0 for k in KEYS}
     out_est = 0
     sessions = {}      # sessionId -> cost-state (dal transcript principale)
+    prices = config.load_prices(root)
+    est_node = {}      # nodo -> USD stimati dal listino
+    est_model = {}     # modello -> USD stimati dal listino
+    unpriced = set()   # modelli senza prezzo: si mostrano solo i token
     for path, meta in src.items():
         if not isinstance(meta, dict):
             continue
@@ -504,37 +517,72 @@ def build(root):
             bm = by_model.setdefault(name, {k: 0 for k in KEYS})
             for k in KEYS:
                 bm[k] += m[k]
+            usd, priced = config.cost_of(m, name, prices)
+            if priced:
+                est_node[label] = est_node.get(label, 0.0) + usd
+                est_model[name] = est_model.get(name, 0.0) + usd
+            else:
+                unpriced.add(name)
     for e in by_node.values():
         e["total"] = sum(e[k] for k in KEYS)
         e["types"] = {k: e[k] for k in KEYS}
-    for m in by_model.values():
+    for name, m in by_model.items():
         m["total"] = sum(m[k] for k in KEYS)
+        if name in est_model:
+            m["cost_usd"] = round(est_model[name], 4)
     totals["total"] = sum(totals[k] for k in KEYS)
     totals["output_estimated"] = out_est
     prev = read_json(os.path.join(root, ".sjck", "tokens.json"), {}) or {}
     heavy.sort(key=lambda h: -h["tokens"])
     cost = None
+    est_total = sum(est_node.values())
+    # Il listino copre il run solo se ogni nodo ha almeno un modello con prezzo.
+    priced_all = bool(est_node) and all(nid in est_node for nid in by_node)
+    by_prices = priced_all and est_total > 0
     if sessions:
-        # Costo reale (cost-state) ripartito sui nodi in proporzione al peso di prezzo.
+        # Costo REALE (cost-state): è un totale di sessione, va ripartito sui nodi.
         usd = sum(s["usd"] for s in sessions.values())
-        wsum = sum(_weight(e) for e in by_node.values()) or 1.0
-        for e in by_node.values():
-            e["cost_usd"] = round(usd * _weight(e) / wsum, 4)
+        shares = est_node if by_prices else {nid: _weight(e) for nid, e in by_node.items()}
+        wsum = sum(shares.values()) or 1.0
+        for nid, e in by_node.items():
+            e["cost_usd"] = round(usd * shares.get(nid, 0.0) / wsum, 4)
+            e["cost_estimated"] = False
         bym = {}
         for s in sessions.values():
             for m, v in s["by_model"].items():
                 bym[m] = round(bym.get(m, 0.0) + v, 4)
         cost = {"usd": round(usd, 4), "by_model": bym, "source": "cost-state",
-                "split": "per-node shares weighted by token price ratios",
+                "estimated": False,
+                "split": ("per-node shares from prices.json" if by_prices else
+                          "per-node shares weighted by token price ratios"),
                 "complete": not any(s.get("unknown_model_cost") for s in sessions.values())}
-        fx = eur_per_usd()
-        if fx:
-            cost["eur"] = round(usd * fx["rate"], 4)
-            cost["fx"] = {"eur_per_usd": fx["rate"], "date": fx.get("date"), "source": fx.get("source")}
-            for e in by_node.values():
-                e["cost_eur"] = round(e["cost_usd"] * fx["rate"], 4)
+        if est_total > 0:
+            cost["estimate_usd"] = round(est_total, 4)   # stesso run coi prezzi, per confronto
+    elif est_total > 0:
+        # Nessun cost-state (run in corso, o transcript senza quell'evento):
+        # costo STIMATO token per token dal listino prezzi.
+        for nid, e in by_node.items():
+            if nid not in est_node:
+                continue   # solo modelli senza prezzo: per questo nodo mostriamo i token
+            e["cost_usd"] = round(est_node[nid], 4)
+            e["cost_estimated"] = True
+        cost = {"usd": round(est_total, 4),
+                "by_model": {m: round(v, 4) for m, v in est_model.items()},
+                "source": "prices", "estimated": True,
+                "prices_updated": prices.get("updated"),
+                "split": "per-node cost computed from prices.json"}
     elif isinstance(prev, dict):
         cost = prev.get("cost")
+    if isinstance(cost, dict) and unpriced:
+        cost["unpriced_models"] = sorted(unpriced)
+    if isinstance(cost, dict) and isinstance(cost.get("usd"), (int, float)) and "eur" not in cost:
+        fx = eur_per_usd()
+        if fx:
+            cost["eur"] = round(cost["usd"] * fx["rate"], 4)
+            cost["fx"] = {"eur_per_usd": fx["rate"], "date": fx.get("date"), "source": fx.get("source")}
+            for e in by_node.values():
+                if isinstance(e.get("cost_usd"), (int, float)):
+                    e["cost_eur"] = round(e["cost_usd"] * fx["rate"], 4)
     return {
         "source": "transcripts",
         "categories_estimated": True,
@@ -612,8 +660,24 @@ def analyze(tokens_data, state):
             out.append({"kind": "heavy", "node": h.get("node"), "tokens": h["tokens"], "saving_estimate": int(h["tokens"] * 0.5),
                         "title": "Largest tool output: %s %s (%s, ~%s)" % (h.get("tool"), h.get("file") or "", h.get("category"), _k(h["tokens"])),
                         "suggestion": "Read a range (offset/limit) or grep first instead of the whole output."})
+    # Costo: ogni insight porta anche i dollari, col prezzo medio del nodo.
+    for i in out:
+        e = bn.get(i.get("node")) or {}
+        c, tot = e.get("cost_usd"), e.get("total") or 0
+        if isinstance(c, (int, float)) and tot:
+            i["cost_usd"] = round(c, 4)
+            i["saving_usd"] = round(c * (i.get("saving_estimate") or 0) / float(tot), 4)
     out.sort(key=lambda i: -abs(i.get("saving_estimate") or 0))
-    return {"insights": out[:8], "estimated": True}
+    rep = {"insights": out[:8], "estimated": True}
+    cost = tokens_data.get("cost")
+    if isinstance(cost, dict) and isinstance(cost.get("usd"), (int, float)):
+        rep["cost"] = {"usd": cost.get("usd"), "eur": cost.get("eur"),
+                       "source": cost.get("source"), "estimated": bool(cost.get("estimated")),
+                       "by_node": {nid: e["cost_usd"] for nid, e in bn.items()
+                                   if isinstance(e.get("cost_usd"), (int, float))},
+                       "by_model": cost.get("by_model") or {},
+                       "unpriced_models": cost.get("unpriced_models") or []}
+    return rep
 
 
 def refresh(root):
@@ -672,11 +736,16 @@ def main(argv):
         print("tokens: %d total (input %d, output %d, cache read %d, cache write %d), %d nodes"
               % (t["total"], t["input"], t["output"], t["cache_read"], t["cache_creation"], len(data["by_node"])))
         c = data.get("cost")
-        if isinstance(c, dict) and c.get("eur") is not None:
-            print("cost: EUR %.2f (USD %.2f, 1 USD = %s EUR, %s %s)" % (c["eur"], c["usd"], c["fx"]["eur_per_usd"],
-                  c["fx"].get("source") or "", c["fx"].get("date") or ""))
-        elif isinstance(c, dict):
-            print("cost: USD %.2f (no EUR rate)" % c["usd"])
+        if isinstance(c, dict) and isinstance(c.get("usd"), (int, float)):
+            tag = " [estimated from prices.json]" if c.get("estimated") else ""
+            if c.get("eur") is not None:
+                print("cost: EUR %.2f (USD %.2f, 1 USD = %s EUR, %s %s)%s" % (c["eur"], c["usd"], c["fx"]["eur_per_usd"],
+                      c["fx"].get("source") or "", c["fx"].get("date") or "", tag))
+            else:
+                print("cost: USD %.2f (no EUR rate)%s" % (c["usd"], tag))
+            if c.get("unpriced_models"):
+                print("no price for: %s (tokens only; add them to .sjck/prices.json)"
+                      % ", ".join(c["unpriced_models"]))
         return 0
     except Exception as e:  # mai bloccare Claude
         if "--hook" not in argv:
