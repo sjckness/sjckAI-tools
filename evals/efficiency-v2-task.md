@@ -2,31 +2,31 @@
 
 Obiettivo: **ridurre il costo in token di un run di sjck-graph senza ridurne
 l'affidabilità**. Su un run reale (task di sviluppo, 6 nodi, Opus 5 + Sonnet 5.5)
-il costo era circa 2,5 volte quello della stessa task in auto mode
-($28 contro $11, prezzi stimati, un solo run per lato).
+il costo era circa 2,3 volte quello della stessa task in auto mode
+($26 contro $11, prezzi di listino, un solo run per lato).
 
 ## Dati misurati (non rifare l'analisi)
 
 | Voce | Costo | Quota |
 |---|---|---|
-| Orchestratore (sessione principale, Opus) | $14,61 | 52% |
-| Implementer T01-T06 | $8,96 | 32% |
-| Validator (8 run) | $2,48 | 9% |
-| Review finale | $1,80 | 6% |
-| Checkpoint dei findings | $0,21 | 1% |
+| Orchestratore (sessione principale, Opus) | $14,61 | 56% |
+| Implementer T01-T06 | $8,01 | 31% |
+| Validator (8 run) | $1,65 | 6% |
+| Review finale | $1,80 | 7% |
+| Checkpoint dei findings | $0,14 | 1% |
 
 - L'orchestratore ha fatto 112 turni (l'intera sessione in auto mode ne ha fatti 77),
   con contesto da 42k a 266k token (medio 153k). La cache read è il 57% del suo costo.
 - I 112 turni: 22 per lanciare o riprendere agenti, 34 di bookkeeping
   (`findings.py` 12, `watchdog.py` 8, `checks` 5, `tokens.py` 3, `plan_score.py` 3,
   `state_schema.py` 2, `interfaces.py` 1), 8 domande all'utente, circa 48 non classificati.
-- Costo dell'orchestratore per nodo: circa $2,2-2,4. Un implementer piccolo costa $0,23-0,79.
+- Costo dell'orchestratore per nodo: circa $2,2-2,4. Un implementer piccolo costa $0,15-0,53.
 - Retry: circa il 12% dei token (stima di `tokens.py`) su T04, T05, T06.
 - T01 (nodo piccolo, passato al primo colpo) ha girato su Opus senza motivo.
 - Console (`console/src/runner.js`) ed estensione VS Code lanciano entrambe
   `claude -p "/sjck-run ..."`: oggi il loop lo esegue un LLM. Non esiste un esecutore deterministico.
-- Stima di tetto: senza orchestratore restano circa $15 contro $11,4 dell'auto
-  (circa 1,3 volte), circa 1,1 con le mosse piccole. Sono ordini di grandezza, non misure.
+- Stima di tetto: senza orchestratore restano circa $14 contro $11,4 dell'auto
+  (circa 1,2 volte), circa 1,1 con le mosse piccole. Sono ordini di grandezza, non misure.
 
 ## Fase 0 — Analisi (prima di modificare file)
 
