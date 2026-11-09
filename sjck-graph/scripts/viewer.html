@@ -43,13 +43,17 @@ h2{margin:0;font-size:16px;font-weight:600}h3{margin:0;font-size:14px;font-weigh
 .between{display:flex;justify-content:space-between;gap:8px}
 .ev{display:flex;gap:10px;font-size:13px}.ev .t{font:11px var(--mono);color:var(--mut);flex:none;padding-top:2px}.ev .dot{margin-top:6px}
 .log{font:12px var(--mono);color:var(--fg2);display:flex;flex-direction:column;gap:4px;max-height:280px;overflow:auto}
-.trow{display:grid;grid-template-columns:56px minmax(0,1fr) 72px;gap:12px;align-items:center}
-.stack{display:flex;height:18px;border-radius:4px;overflow:hidden;background:var(--panel2)}
+.trow{display:grid;grid-template-columns:56px minmax(0,1fr) 56px 64px;gap:12px;align-items:center}
+.rrow{display:grid;grid-template-columns:minmax(80px,160px) minmax(0,1fr) 110px;gap:12px;align-items:center}
+.stack.tall{height:28px;gap:2px}.stack.tall b{font:500 11px var(--mono);color:#fff;padding-left:8px;line-height:28px}.stack>div{min-width:1px}
+.notes{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--fg2)}.notes>div{display:flex;gap:8px;align-items:baseline}
+td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}tfoot td{border-top:1px solid var(--line);border-bottom:0;padding-top:10px}
+.stack{display:flex;gap:2px;height:18px;border-radius:4px;overflow:hidden;background:var(--panel2)}
 .num{font:12px var(--mono);color:var(--fg2);text-align:right}
 .ins{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px}
 .cmp{display:grid;grid-template-columns:150px minmax(0,1fr) 90px;gap:12px;align-items:center;font-size:13px}
 .bar8{height:8px;border-radius:4px;background:var(--line);overflow:hidden}.bar8>div{height:8px}
-table{width:100%;min-width:720px;border-collapse:collapse;font-size:13px}
+table{width:100%;min-width:760px;border-collapse:collapse;font-size:13px}
 th{text-align:left;color:var(--mut);font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:8px;border-bottom:1px solid var(--line)}
 td{padding:10px 8px;border-bottom:1px solid var(--line2);vertical-align:top}
 .empty{color:var(--mut);font-size:13px;padding:24px;text-align:center;border:1px dashed var(--line);border-radius:10px}
@@ -66,7 +70,7 @@ code{font-family:var(--mono);font-size:12px;color:var(--fg2)}
 var D = JSON.parse(document.getElementById('data').textContent);
 var S = D.state || {}, T = D.tokens, R = D.report, F = D.findings || [], W = D.watchdog || [];
 var COL = {planned:'#F5A524',validated:'#3FB950',running:'#4C8DFF',done:'#A371F7',pending:'#6B7585',failed:'#F85149',blocked:'#E3B341','done-unverified':'#D4A72C'};
-var TYPES = [['cache_read','cache read','#4C8DFF'],['cache_creation','cache write','#A371F7'],['input','fresh input','#F5A524'],['output','output','#3FB950']];
+var TYPES = [['cache_read','cache read','#3987e5'],['cache_creation','cache write','#d95926'],['input','fresh input','#c98500'],['output','output','#199e70']];
 var CAT = [['system','system + CLAUDE.md','#5B6B82'],['card','card','#F5A524'],['interfaces','interfaces','#FFD08A'],
   ['file_read_in_card','files in card','#3FB950'],['file_read_outside_card','files outside card','#F85149'],
   ['tool_output','tool output','#4C8DFF'],['agent_messages','agent messages','#A371F7'],['thinking','past thinking','#D29922'],['reminders','reminders','#8B949E'],['other','other','#3A4250']];
@@ -89,23 +93,32 @@ function levels(){
   var out=[];nodes.forEach(function(n){var d=lvl[n.id];(out[d]=out[d]||[]).push(n)});return out.filter(Boolean);
 }
 
+function usd(x){if(x==null||isNaN(x))return '—';x=+x;return '$ '+x.toFixed(x<100?2:0)}
+function pct(a,b){return b?Math.round(a/b*100)+'%':'—'}
 function costKpi(){
   var c=T&&T.cost;
   if(c==null)return ['cost','—','known at session end'];
   if(typeof c==='number')return ['cost',String(c),T.currency||''];
+  var tag=c.estimated===false?'measured':c.estimated?'estimated from prices':'';
+  if(c.complete===false)tag+=(tag?' · ':'')+'incomplete';
   if(c.eur!=null){var fx=c.fx||{};
-    return ['cost','€ '+c.eur.toFixed(2),'$ '+c.usd.toFixed(2)+' · 1 $ = '+fx.eur_per_usd+' € ('+(fx.source||'')+(fx.date?' '+fx.date:'')+')']}
-  return ['cost','$ '+c.usd.toFixed(2),'no EUR rate'];
+    return ['cost','€ '+c.eur.toFixed(2),usd(c.usd)+' · '+tag+(fx.eur_per_usd?' · 1 $ = '+fx.eur_per_usd+' €':'')]}
+  return ['cost',usd(c.usd),tag+(tag?' · ':'')+'no EUR rate'];
 }
+function sumTurns(){var n=0,bn=(T&&T.by_node)||{};Object.keys(bn).forEach(function(i){n+=bn[i].turns||0});return n}
 
 function kpis(){
   var cnt=function(s){return nodes.filter(function(n){return n.status===s}).length};
   var run=nodes.filter(function(n){return n.status==='running'}).map(function(n){return n.id});
   if(tab==='tokens'&&T){var t=T.totals||{};var inp=(t.input||0)+(t.cache_read||0)+(t.cache_creation||0);
-    var hit=inp?Math.round((t.cache_read||0)/inp*100)+'%':'—';var v=cnt('validated');
-    return [['total tokens',k(t.total!=null?t.total:(t.input||0)+(t.output||0)),'all agents'],['cache hit',hit,'cache read / input'],
-      ['per validated node',v?k((t.total||0)/v):'—',v+' validated nodes'],['wasted',k(R&&R.wasted),'failed attempts, loops, reads outside card'],
-      costKpi()]}
+    var tot=t.total!=null?t.total:(t.input||0)+(t.output||0);var v=cnt('validated'),c=T.cost,cu=c&&typeof c==='object'?c.usd:null;
+    var nm=Object.keys(T.by_model||{}).length;
+    return [['total tokens',k(tot),'in '+k(inp)+' · out '+k(t.output)+(t.output_estimated?' (~'+k(t.output_estimated)+' est.)':'')],
+      ['cache hit',pct(t.cache_read||0,inp),'read '+k(t.cache_read)+' · write '+k(t.cache_creation)],
+      costKpi(),
+      ['per validated node',v?k(tot/v):'—',v+' validated'+(cu!=null&&v?' · '+usd(cu/v)+' each':'')],
+      ['turns',String(sumTurns()||'—'),nm+' model'+(nm===1?'':'s')+' · '+Object.keys(T.by_agent||{}).length+' transcripts'],
+      ['wasted',k(R&&R.wasted),'failed attempts, loops, reads outside card']]}
   return [['nodes',cnt('validated')+'/'+nodes.length,'validated'],['running',String(run.length),run.join(' · ')||'—'],
     ['subagents',String(M.subagents||0),'launched'],['validator fail',String(M.validator_fails||0),'rejected attempts'],
     ['watchdog',String((M.watchdog_warnings||0)+(M.watchdog_stops||0)),(M.watchdog_warnings||0)+' nudges · '+(M.watchdog_stops||0)+' stops']];
@@ -137,6 +150,51 @@ function graphView(){
     (nodes.length?'<div class="scroll"><div class="dag">'+h+'</div></div>':'<div class="empty">No nodes yet.</div>')+'</div><div class="side">'+side+'</div></section>';
 }
 
+function rankBars(title,ent,note){
+  ent=ent.filter(function(e){return e[1]!=null&&e[1]>0}).sort(function(x,y){return y[1]-x[1]});
+  if(!ent.length)return '';var mx=ent[0][1],sum=ent.reduce(function(a,e){return a+e[1]},0);
+  return '<div style="display:flex;flex-direction:column;gap:8px"><div class="between" style="align-items:baseline"><h3>'+esc(title)+'</h3><span class="sub" style="font-size:11px">'+esc(note||'')+'</span></div>'+
+    ent.slice(0,12).map(function(e){return '<div class="rrow" title="'+esc(e[0]+': '+usd(e[1])+' ('+pct(e[1],sum)+')')+'"><span class="nid" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e[0])+'</span><div class="bar8"><div style="width:'+(e[1]/mx*100)+'%;background:#3987e5"></div></div><span class="num">'+usd(e[1])+' · '+pct(e[1],sum)+'</span></div>'}).join('')+'</div>';
+}
+function notices(){
+  var o=[],c=T.cost;
+  if(T.unpriced_models&&T.unpriced_models.length)o.push(['#E3B341','Unpriced models: '+T.unpriced_models.join(', ')+' — their cost is not counted. Add them to <code>prices.json</code>.']);
+  if(c&&typeof c==='object'&&c.complete===false&&!(T.unpriced_models&&T.unpriced_models.length))o.push(['#E3B341','Cost is incomplete: some models have no price.']);
+  if(c&&typeof c==='object'&&c.estimated)o.push(['#8B95A5','Cost is estimated from token usage × configured prices'+(T.prices_updated?' (prices updated '+T.prices_updated+')':'')+'; it is not the billed amount.']);
+  if(T.categories_estimated)o.push(['#8B95A5','Context split by category is an estimate of the real input.']);
+  if(T.totals&&T.totals.output_estimated)o.push(['#8B95A5','Output of '+k(T.totals.output_estimated)+' tokens is estimated (transcript lines without final usage).']);
+  return o.length?'<div class="notes">'+o.map(function(x){return '<div><i class="dot" style="background:'+x[0]+'"></i><span>'+x[1].replace(/<(?!\/?code>)/g,'&lt;')+'</span></div>'}).join('')+'</div>':'';
+}
+function typeBar(){
+  var t=T.totals||{},tot=0;TYPES.forEach(function(c){tot+=t[c[0]]||0});if(!tot)return '';
+  return '<div style="display:flex;flex-direction:column;gap:8px"><div class="between"><h3>Whole run, by token type</h3><span class="sub" style="font-size:11px">'+k(tot)+' tokens</span></div><div class="stack tall" role="img" aria-label="token types">'+
+    TYPES.map(function(c){var v=t[c[0]]||0,w=v/tot*100;return v?'<div title="'+esc(c[1]+': '+v.toLocaleString('en')+' ('+Math.round(w)+'%)')+'" style="width:'+w+'%;background:'+c[2]+'">'+(w>=12?'<b>'+Math.round(w)+'%</b>':'')+'</div>':''}).join('')+'</div>'+
+    '<div class="legend">'+TYPES.map(function(c){return '<span><i class="sw" style="background:'+c[2]+'"></i>'+c[1]+' <b style="color:var(--fg2);font-weight:500">'+k(t[c[0]])+'</b></span>'}).join('')+'</div></div>';
+}
+function nodeTable(){
+  var bn=T.by_node||{},ids=Object.keys(bn);if(!ids.length)return '';
+  var st={};nodes.forEach(function(n){st[n.id]=n});
+  var rows=ids.sort(function(a,b){return (bn[b].cost_usd||0)-(bn[a].cost_usd||0)||(bn[b].total||0)-(bn[a].total||0)}).map(function(id){
+    var e=bn[id],n=st[id]||{},inp=(e.input||0)+(e.cache_read||0)+(e.cache_creation||0),ms=Object.keys(e.models||{}).join(', ');
+    return '<tr><td><code>'+esc(id)+'</code></td><td>'+(n.status?badge(n.status):'<span class="meta">—</span>')+'</td><td class="meta">'+esc(ms||n.model||'—')+'</td>'+
+      '<td class="r">'+k(e.total)+'</td><td class="r">'+k(e.input)+'</td><td class="r">'+k(e.cache_read)+'</td><td class="r">'+k(e.cache_creation)+'</td><td class="r">'+k(e.output)+'</td>'+
+      '<td class="r">'+pct(e.cache_read||0,inp)+'</td><td class="r">'+(e.turns!=null?e.turns:'—')+'</td><td class="r">'+(n.attempts!=null?n.attempts+1:'—')+'</td><td class="r">'+usd(e.cost_usd)+(e.estimated?'<span class="meta"> ~</span>':'')+'</td></tr>'}).join('');
+  var t=T.totals||{},c=T.cost&&typeof T.cost==='object'?T.cost.usd:null;
+  return '<section class="card"><h2>Per node, all numbers</h2><div class="scroll"><table><thead><tr><th>node</th><th>status</th><th>model</th><th class="r">total</th><th class="r">fresh in</th><th class="r">cache read</th><th class="r">cache write</th><th class="r">out</th><th class="r">hit</th><th class="r">turns</th><th class="r">tries</th><th class="r">cost</th></tr></thead><tbody>'+rows+
+    '</tbody><tfoot><tr><td colspan="3"><b>run</b></td><td class="r">'+k(t.total)+'</td><td class="r">'+k(t.input)+'</td><td class="r">'+k(t.cache_read)+'</td><td class="r">'+k(t.cache_creation)+'</td><td class="r">'+k(t.output)+'</td><td class="r">'+pct(t.cache_read||0,(t.input||0)+(t.cache_read||0)+(t.cache_creation||0))+'</td><td class="r">'+(sumTurns()||'—')+'</td><td></td><td class="r">'+usd(c)+'</td></tr></tfoot></table></div>'+
+    '<div class="sub" style="font-size:12px">~ = estimated cost. Sorted by cost.</div></section>';
+}
+function agentTable(){
+  var ba=T.by_agent||{},ids=Object.keys(ba);if(ids.length<2)return '';
+  var rows=ids.sort(function(a,b){return (ba[b].cost_usd||0)-(ba[a].cost_usd||0)||(ba[b].total||0)-(ba[a].total||0)}).slice(0,40).map(function(id){var e=ba[id];
+    return '<tr><td><code>'+esc(id.length>26?id.slice(0,26)+'…':id)+'</code></td><td><code>'+esc(e.node)+'</code></td><td class="meta">'+esc(e.kind||'—')+'</td><td class="meta">'+esc(Object.keys(e.models||{}).join(', ')||'—')+'</td><td class="r">'+k(e.total)+'</td><td class="r">'+k(e.output)+'</td><td class="r">'+usd(e.cost_usd)+'</td></tr>'}).join('');
+  return '<section class="card"><h2>Per transcript (agent)</h2><div class="scroll"><table><thead><tr><th>transcript</th><th>node</th><th>kind</th><th>model</th><th class="r">total</th><th class="r">out</th><th class="r">cost</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';
+}
+function heavyList(){
+  var h=T.heavy||[];if(!h.length)return '';
+  return '<div class="card side" style="gap:8px"><h2>Heaviest tool results</h2>'+h.map(function(x){return '<div class="ins"><div class="between"><span class="meta">'+esc(x.node||'')+' · '+esc(x.tool||'')+'</span><span style="font:600 13px var(--mono)">'+k(x.tokens)+'</span></div><code style="overflow-wrap:anywhere">'+esc(x.file||x.category||'')+'</code></div>'}).join('')+'</div>';
+}
+
 function tokensView(){
   if(!T)return '<section class="card"><h2>Token</h2><div class="empty">No token data yet: it is written at the end of each node and of each turn (<code>.sjck/tokens.json</code>, hooks <code>SubagentStop</code>/<code>Stop</code> of the sjck-graph plugin).</div></section>';
   var rows=[],bn=T.by_node||{};Object.keys(bn).forEach(function(id){rows.push([id,bn[id]])});
@@ -144,17 +202,26 @@ function tokensView(){
   var byType=!rows.some(function(r){return r[1].categories});var CS=byType?TYPES:CAT;
   var leg=CS.map(function(c){return '<span><i class="sw" style="background:'+c[2]+'"></i>'+c[1]+'</span>'}).join('');
   var bars=rows.map(function(r){var cats=(byType?r[1].types||r[1]:r[1].categories)||{},tot=0;CS.forEach(function(c){tot+=cats[c[0]]||0});
-    var segs=CS.map(function(c){var v=cats[c[0]]||0;return v?'<div title="'+esc(c[1]+': '+k(v))+'" style="width:'+(v/tot*100)+'%;background:'+c[2]+'"></div>':''}).join('');
+    var segs=tot?CS.map(function(c){var v=cats[c[0]]||0;return v?'<div title="'+esc(c[1]+': '+k(v)+' ('+Math.round(v/tot*100)+'%)')+'" style="width:'+(v/tot*100)+'%;background:'+c[2]+'"></div>':''}).join(''):'';
     var tt=r[1].total!=null?r[1].total:tot;
-    return '<div class="trow"><span class="nid" style="font-size:12px">'+esc(r[0])+'</span><div class="stack" role="img" aria-label="'+esc(r[0]+': '+k(tt)+' token')+'">'+segs+'</div><span class="num">'+k(tt)+'</span></div>'}).join('');
+    return '<div class="trow"><span class="nid" style="font-size:12px">'+esc(r[0])+'</span><div class="stack" role="img" aria-label="'+esc(r[0]+': '+k(tt)+' token')+'">'+segs+'</div><span class="num">'+k(tt)+'</span><span class="num">'+usd(r[1].cost_usd)+'</span></div>'}).join('');
+  var C0=T.cost&&typeof T.cost==='object'?T.cost:{};
+  var mdl=Object.keys(C0.by_model||{}).map(function(m){return [m,C0.by_model[m]]});
+  var cost=rankBars('Cost by node',rows.map(function(r){return [r[0],r[1].cost_usd]}),T.cost&&T.cost.estimated?'estimated':'')+
+    rankBars('Cost by model',mdl);
   var cmp='';var C=R&&R.compare;
   if(C&&C.length){cmp='<div style="display:flex;flex-direction:column;gap:10px;padding-top:8px;border-top:1px solid var(--line)"><h3>Kit vs baseline</h3>'+
     C.map(function(m){var mx=Math.max(m.kit,m.baseline)||1;return '<div class="cmp"><span style="color:var(--fg2)">'+esc(m.label)+'</span><div style="display:flex;flex-direction:column;gap:4px"><div class="bar8"><div style="width:'+(m.kit/mx*100)+'%;background:#F5A524"></div></div><div class="bar8"><div style="width:'+(m.baseline/mx*100)+'%;background:#5B6B82"></div></div></div><span class="num" style="color:'+(m.better?'#3FB950':'#F85149')+'">'+esc(m.delta||'')+'</span></div>'}).join('')+
     '<div class="legend"><span><i class="sw" style="background:#F5A524"></i>sjck-graph</span><span><i class="sw" style="background:#5B6B82"></i>baseline</span></div></div>'}
   var ins=(R&&R.insights||[]).map(function(i){var good=(i.saving_estimate||0)<0||i.good;
-    return '<div class="ins"><div class="between"><span class="lbl" style="font-size:10px">'+esc(i.kind)+'</span><span style="font:600 13px var(--mono);color:'+(good?'#3FB950':'#F85149')+'">'+esc(i.amount||(i.tokens!=null?(good?'−':'+')+k(Math.abs(i.saving_estimate||i.tokens)):''))+'</span></div><div style="font-size:13px;font-weight:500">'+esc(i.title||i.suggestion)+'</div><div class="sub" style="font-size:12px">'+esc(i.title?i.suggestion:(i.node||''))+'</div></div>'}).join('');
-  return '<section class="row"><div class="card main"><div class="between" style="flex-wrap:wrap;align-items:center"><h2>'+(byType?'Tokens per node, by type':'Where the context goes, per node'+(T.categories_estimated?' <span class="sub" style="font-weight:400">(estimated split of real input)</span>':''))+'</h2><div class="legend">'+leg+'</div></div>'+
-    (bars||'<div class="empty">No nodes with recorded tokens.</div>')+cmp+'</div><div class="card side" style="gap:12px"><h2>Where tokens are saved, where they are wasted</h2>'+(ins||'<div class="sub">Insights arrive with <code>token-report.json</code>.</div>')+'</div></section>';
+    var amt=i.amount||(i.tokens!=null?(good?'−':'+')+k(Math.abs(i.saving_estimate||i.tokens)):'');
+    var sv=i.saving_usd!=null?'saves ~'+usd(i.saving_usd):(i.cost_usd!=null?'costs '+usd(i.cost_usd):'');
+    return '<div class="ins"><div class="between"><span class="lbl" style="font-size:10px">'+esc(i.kind)+'</span><span style="font:600 13px var(--mono);color:'+(good?'#3FB950':'#F85149')+'">'+esc(amt)+'</span></div><div style="font-size:13px;font-weight:500">'+esc(i.title||i.suggestion)+'</div><div class="sub" style="font-size:12px">'+esc(i.title?i.suggestion:(i.node||''))+(sv?' · '+esc(sv):'')+'</div></div>'}).join('');
+  return notices()+'<section class="row"><div class="main" style="display:flex;flex-direction:column;gap:16px"><div class="card">'+typeBar()+
+    '<div class="between" style="flex-wrap:wrap;align-items:center;border-top:1px solid var(--line);padding-top:14px"><h2>'+(byType?'Tokens per node, by type':'Where the context goes, per node'+(T.categories_estimated?' <span class="sub" style="font-weight:400">(estimated split of real input)</span>':''))+'</h2><div class="legend">'+leg+'</div></div>'+
+    '<div class="trow" style="margin-bottom:-6px"><span></span><span></span><span class="lbl num">tokens</span><span class="lbl num">cost</span></div>'+
+    (bars||'<div class="empty">No nodes with recorded tokens.</div>')+cmp+'</div>'+
+    (cost?'<div class="card">'+cost+'</div>':'')+'</div><div class="side"><div class="card" style="gap:12px"><h2>Where tokens are saved, where they are wasted</h2>'+(ins||'<div class="sub">Insights arrive with <code>token-report.json</code>.</div>')+'</div>'+heavyList()+'</div></section>'+nodeTable()+agentTable();
 }
 
 function findingsView(){
