@@ -67,9 +67,10 @@ ferma con un codice di uscita e un messaggio, lasciando lo stato riprendibile.
 | 12 | stallo (nessun nodo pronto né in corso) |
 | 2 | stato o configurazione non validi |
 
-Test in `sjck-graph/tests/` con un `claude` finto (come `console/test/fake-claude.js`):
-nodi pronti e dipendenze, retry, `failed`, ripresa dopo interruzione, ciascun codice di
-uscita, parallelismo con file disgiunti e rifiuto con file sovrapposti.
+Questa è una task di **sola implementazione**: non scrivere nuovi test (li scriviamo noi
+dopo, con un `claude` finto). Rendi però il codice facile da testare: logica del loop in
+funzioni pure separate dalle chiamate a `claude`, con il comando da lanciare iniettabile
+(variabile d'ambiente o argomento), così un `claude` finto può sostituirlo.
 
 ## Parte B — integrazione nella skill (priorità 2)
 
@@ -94,21 +95,20 @@ Una riga in `CHANGELOG.md` per ogni parte, documentazione in `docs/` dove serve.
 
 - Python 3.9, solo standard library, nessuna chiamata di rete dal codice (leggere la
   documentazione in Fase 0 è consentito).
-- I test esistenti restano verdi: `python3 -m unittest discover -s sjck-graph/tests`
-  (138 al commit di partenza).
+- Non rompere i test esistenti: a fine lavoro lancia **una sola volta**
+  `python3 -m unittest discover -s sjck-graph/tests` (138 al commit di partenza) e
+  compila ogni script nuovo con `python3 -m py_compile`. Nient'altro in termini di test.
 - Non modificare `console/` né `vscode/`. Non modificare i file di misura
   `evals/sum_usage.py`, `evals/by_transcript.py`, `evals/ctx_profile.py` né questo file.
 - Non leggere altri branch del repo. Lavora sul branch corrente: committa, non fare push né merge.
-- Budget di prova reale: al massimo **un** smoke test con `claude -p` vero su **una** task S di
-  `evals/tasks/`. La suite completa la lanciamo noi dopo, quindi non rilanciarla. Per tutto il
-  resto usa il `claude` finto.
+- Non lanciare `claude -p` veri né le task di `evals/`: la prova reale la facciamo noi dopo.
 
 ## Consegna
 
 `EFFICIENCY-V2-REPORT.md` nella root, in italiano, con:
 1. Flag di `claude -p` verificati, con link alla documentazione.
 2. Per ciascuna parte: cosa è cambiato (file), comando esatto per verificarlo, limiti noti.
-3. Risultato dello smoke test (esito di `check.sh`, durata) e come misurarlo
-   (`python3 evals/sum_usage.py <cartella> --since <ora>` e `evals/by_transcript.py`).
+3. Come provare il runner a mano su una task di `evals/` (comandi esatti), senza
+   averlo eseguito tu.
 4. Cosa NON è stato verificato, e i rischi (in particolare: cosa faceva l'LLM
    orchestratore che il runner non fa).
