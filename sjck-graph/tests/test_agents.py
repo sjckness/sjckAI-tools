@@ -64,8 +64,7 @@ class TestAgents(unittest.TestCase):
     def test_omit_claude_md(self):
         for name in EXPECTED:
             with self.subTest(agent=name):
-                expect = "true" if name in ("sjck-scout", "sjck-implementer") else None
-                self.assertEqual(parse(name).get("omitClaudeMd"), expect)
+                self.assertEqual(parse(name).get("omitClaudeMd"), "true")
 
     def test_critic(self):
         fm = parse("sjck-critic")

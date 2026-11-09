@@ -54,7 +54,8 @@ Per ogni alternativa mostra una riga di tabella:
   di grandezza e dichiara che sono stime grezze:
   avvio subagente ≈ 15-25k token, nodo implementer piccolo ≈ 30-50k,
   medio ≈ 50-90k, validator ≈ 15-30k, planner ≈ 40-80k.
-  Mai cifre in valuta se non esiste `prices.json`.
+  Il costo in valuta si prende dal listino (`config.py prices`): token per
+  tipo × prezzo del modello. Dichiara che è una stima.
 - Il tempo segue il percorso critico, non il numero di nodi.
 - Proponi sempre anche la versione più piccola sensata (spesso M), così
   l'utente vede cosa compra il parallelismo.
@@ -79,8 +80,11 @@ Passa il piano scelto attraverso questa checklist e applica ciò che conviene:
    anche se lo vede rotto (andrà nei findings).
 8. **Percorso critico**: sposta i nodi lunghi o rischiosi il prima possibile
    e tienili fuori dalla catena principale se si può.
-9. **Riuso**: interfacce e card di run archiviati ancora valide (file non
-   cambiati) si riusano invece di rigenerarle.
+9. **Riuso**: interfacce già estratte si riusano invece di rigenerarle, e
+   "file non cambiati" si verifica, non si suppone:
+   `python3 "<script>/context.py" interfaces reuse --name <nome> --cwd "$PWD"`
+   (`fresh` = il nodo scout si salta). Nel piano, un nodo scout riusabile vale
+   zero token: dillo nella stima.
 
 Mostra il DAG finale in testo (livelli → nodi) e un riepilogo dei risparmi:
 "rispetto alla prima versione: −2 nodi, percorso critico 5→3, ~−60k token".

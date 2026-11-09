@@ -252,11 +252,18 @@ per node, not thousands.
 - **Live change requests** — `/sjck-change` and the console write change
   requests; the orchestrator applies them at a safe point with `inbox.py`,
   re-running only invalidated nodes and rolling back if the plan score breaks.
+- **Two-level validation** — `checks.py` runs the card's deterministic checks
+  first: every acceptance criterion written as `` `command` `` -> expected
+  outcome, plus a scope check on the git diff. A clear pass or a clear failure
+  never starts the LLM validator; an ambiguous or unverifiable check does, with
+  a model you configure (`.sjck/config.json`), and it is told which commands
+  are already green so it does not re-run them.
 
 The orchestrator is the **only writer** of the run state. Everything else — the
 chat, the console, VS Code — writes proposals and decisions it applies.
 
 State schema: [`sjck-graph/docs/state-schema.md`](sjck-graph/docs/state-schema.md) ·
+Two-level validation: [`sjck-graph/docs/validation.md`](sjck-graph/docs/validation.md) ·
 Known limitations: [`sjck-graph/docs/limitations.md`](sjck-graph/docs/limitations.md)
 
 ---
@@ -280,6 +287,18 @@ python3 sjck-graph/scripts/graph_view.py --cwd examples/demo --open
 <td><b>Findings</b> — what agents found out of scope, and where it could enter the plan.</td>
 </tr>
 </table>
+
+Tokens come with a **cost in dollars** per run, per node and per model: real
+when the session's `cost-state` is available, otherwise estimated from a price
+list you can override without touching code
+([`docs/cost.md`](sjck-graph/docs/cost.md)). `context.py top` names the two
+heaviest context categories of a run and the intervention that shrinks them
+([`docs/context-diet.md`](sjck-graph/docs/context-diet.md)):
+
+```bash
+python3 sjck-graph/scripts/context.py top --cwd examples/demo
+python3 sjck-graph/scripts/config.py prices --model claude-opus-5-5
+```
 
 ---
 

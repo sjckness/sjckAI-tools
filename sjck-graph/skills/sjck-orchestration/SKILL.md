@@ -41,6 +41,7 @@ riga in `mode_reason`. Unica eccezione: senza validator un nodo non diventa
 - Se esiste con `status: done|failed`, sposta state.json, cards/, out/,
   findings.jsonl, watchdog.jsonl e watchdog_state.json in
   .sjck/archive/<YYYYMMDD-HHMM>/ e riparti. `backlog.md` resta.
+  `interfaces/` NON si archivia: è la cache tra run (hash in `<nome>.json`).
 - Leggi CLAUDE.md e .claude/map/ (se esistono) SOLO per scegliere i file
   rilevanti: non copiarli nelle card, cita i percorsi.
 
@@ -49,8 +50,8 @@ Stima con al massimo 3 chiamate Grep/Glob, senza leggere file interi.
 
 | Modalità | Quando | Come |
 |---|---|---|
-| S — inline | ≤3 file, un solo concern, nessuna incognita | Fai tu la task. Poi UN `sjck-validator` (salta solo per typo, rename, config di 1 riga). |
-| M — catena | 2-4 step sequenziali, o serve esplorare prima | Card scritte da te: scout → implementer → validator. Niente planner. |
+| S — inline | ≤3 file, un solo concern, nessuna incognita | Fai tu la task. Poi livello 1 (`checks.py run`, passo 4) e, se `llm`, UN `sjck-validator` con override modello (salta solo per typo, rename, config di 1 riga). |
+| M — catena | 2-4 step sequenziali, o serve esplorare prima | Card scritte da te: scout → implementer → livello 1 (`checks.py run`) → validator se `llm`, con override modello. Niente planner. |
 | L — DAG | ≥2 sottoparti indipendenti, >5 file o più package | planner → DAG → nodi paralleli, validator dopo OGNI nodo. |
 
 Se la task è grande e vaga (obiettivo poco chiaro, nessun modo evidente di
@@ -91,7 +92,7 @@ Ogni card in .sjck/cards/<ID>.md:
 ## Obiettivo
 ## Puoi modificare
 ## Leggi
-## Criteri di accettazione   (comando + esito atteso, o condizione sul diff)
+## Criteri di accettazione   (`` `comando` `` → esito atteso: li esegue checks.py, docs/validation.md)
 ## Fuori scope              (cosa il nodo NON deve sistemare: lo annota nei findings)
 ## Correzioni richieste      (vuota; la compili coi findings del validator)
 ```
@@ -115,18 +116,36 @@ modificarlo (lo script vi scrive `plan_score`). Rilancialo dopo ogni nodo aggiun
 Ripeti finché tutti i nodi sono `validated`/`done-unverified`, oppure uno è `failed`,
 oppure c'è stallo (nessun nodo running né pronto → chiedi all'utente):
 1. Pronti = `pending` con TUTTE le deps `validated` (`done` non basta).
-2. Segnali `running` in state.json, POI lanciali tutti insieme in background
-   (`isolation: worktree` se più di uno scrive file). Passa `model` ed `effort`
-   del nodo come override al lancio; il `budget` va scritto nel prompt
-   (reference/scripts.md). Subito dopo il lancio scrivi in `nodes[].agent_id`
-   l'id restituito dal tool di lancio.
+2. Nodi `scout`: prima `python3 "<script>/context.py" interfaces skip --cwd "$PWD"`; un ID
+   in `reusable` diventa `validated` senza lancio (riga nel log). Gli altri: segnali
+   `running` in state.json (log: `base <ID> $(git rev-parse HEAD)`), POI lanciali insieme
+   in background (`isolation: worktree` se più di uno scrive file). Passa `model` ed
+   `effort` del nodo come override al lancio; il prompt (budget compreso) lo costruisce
+   `context.py prompt --id <ID> --role <ruolo> --script "<script>"` (reference/scripts.md).
+   Subito dopo il lancio scrivi in `nodes[].agent_id` l'id restituito dal tool di lancio.
 3. A completamento leggi solo .sjck/out/<ID>.json → `done`. Copia
    `assumptions` nel nodo; esegui `python3 "<script>"/watchdog.py usage --cwd "$PWD"`
    (scrive `usage` dei nodi e le somme in metrics) e RILEGGI state.json prima di
-   modificarlo. Per ogni voce di `findings` di `.sjck/out/<ID>.json` e di `PLAN.json`
+   modificarlo. Costo in denaro: `.sjck/tokens.json` (`cost.usd`, `by_node[].cost_usd`,
+   `by_agent[].cost_usd`), da citare SEMPRE col flag `estimated` (`true` = stima dai prezzi
+   di `scripts/prices.json`, override `.sjck/prices.json`, non misurato; docs/cost.md).
+   Per ogni nome in `new_interfaces`: `context.py interfaces record --name <nome>
+   --from-card <ID>` (l'hash che farà saltare quel nodo al prossimo run).
+   Per ogni voce di `findings` di `.sjck/out/<ID>.json` e di `PLAN.json`
    esegui `findings.py add --from <ID>`; i `findings` di `.val.json` e `REVIEW.json`
    sono correzioni, non si registrano.
-4. Lancia `sjck-validator` sull'ID → .sjck/out/<ID>.val.json:
+4. Livello 1, deterministico (docs/validation.md): `python3 "<script>/checks.py" run <ID>
+   --cwd "$PWD" --base <sha del log>` → JSON su stdout e in `.sjck/out/<ID>.l1.json`.
+   Lo scope-check confronta il diff da `--base` con "Puoi modificare": fuori scope o non
+   verificabile → `llm`. Exit 3 = config non valida: dillo all'utente, non è un `fail`.
+   Agisci sul campo `action`:
+   - `done` → `validated` senza validator LLM (riga nel log)
+   - `retry` → NON lanciare il validator: appendi `output` nella card sotto
+     "Correzioni richieste" e vai al ramo `fail` qui sotto
+   - `llm` → lancia `sjck-validator` sull'ID con override `model`/`effort` dai campi
+     omonimi del JSON e la card ridotta di `context.py card --id <ID> --role validator`:
+     legge `.l1.json`, NON riesegue i comandi in `green`, giudica solo `residual`,
+     scope e regressioni → .sjck/out/<ID>.val.json:
    - `pass` → `validated`
    - `fail`, `attempts < 2` → findings nella card sotto "Correzioni richieste",
      attempts += 1, riprendi lo STESSO implementer con SendMessage → `running`
@@ -153,4 +172,5 @@ oppure c'è stallo (nessun nodo running né pronto → chiedi all'utente):
 - Mai saltare un nodo: si sblocca solo da state.json.
 - Mai leggere i file prodotti dagli agenti: solo i loro JSON.
 - Mai due nodi paralleli sugli stessi file.
-- Mai `validated` senza un .val.json con `verdict: pass`.
+- Mai `validated` senza un `pass`: .val.json con `verdict: pass`, `action: done` del
+  livello 1, o nodo scout saltato perché le interfacce sono fresche.

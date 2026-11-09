@@ -31,7 +31,54 @@ illeggibile → exit 2. Dopo averlo lanciato rileggi state.json.
 watchdog_stops: scritti da `watchdog.py usage`), `assumptions` ([str], copiate dall'out JSON).
 Tabella indicativa (la compila il planner): scout haiku/low 20/1500; implementer facile
 sonnet/medium 40/2000; medio sonnet/high 60/3000; difficile opus/high 80/4000;
-validator sonnet/high 40/2000.
+validator sonnet/high 40/2000 (il validatore LLM è configurabile: vedi checks.py).
+
+## checks.py (validazione livello 1)
+`python3 "<script>"/checks.py run <ID> --cwd "$PWD" --base <sha>` → JSON su stdout e in
+`.sjck/out/<ID>.l1.json`. Esegue i soli criteri della card nella forma
+`` `comando` `` → esito atteso (`exit N`, `0 fallimenti`, `ok`; esito vuoto = exit 0) e
+confronta il diff da `--base` (più i file non tracciati) con "Puoi modificare".
+Campi: `outcome`, `checks`, `output`, `green` (comandi già verdi: il livello 2 NON li
+riesegue), `residual` (i soli criteri da giudicare, voce `scope:` compresa),
+`out_of_scope`, `action`, `invoke_llm`, `model`, `effort`.
+Exit: 0 `pass` → `action: done`, nodo `validated` senza LLM · 1 `fail` → `retry`, niente
+LLM, l'`output` va in "Correzioni richieste" · 2 `ambiguous` → `llm`, lancia
+`sjck-validator` · 3 configurazione non valida (non è un `fail` del nodo).
+La prosa resta sempre al livello 2: un criterio che il livello 1 non ha potuto eseguire
+non è un criterio superato. `validator: llm` nei criteri forza il livello 2 anche su
+`pass`; `validator.always_llm` lo forza sempre.
+Modello ed effort del livello 2: `.sjck/config.json` →
+`{"validator": {"model": "haiku", "effort": "low", "timeout_s": 300, "always_llm": false}}`
+(oppure `~/.sjck/config.json`, `$SJCK_CONFIG`, `$SJCK_VALIDATOR_MODEL`,
+`$SJCK_VALIDATOR_EFFORT`); default `sonnet`/`high`, come il frontmatter dell'agente.
+Vanno passati come override al lancio: senza override vince il frontmatter e la
+configurazione non ha effetto. `checks.py model` stampa il modello risolto.
+I comandi girano in una shell nella cartella del run: vedi docs/limitations.md.
+
+## context.py (dieta del contesto)
+- `context.py top --cwd "$PWD"`: le due categorie di contesto più pesanti del run
+  (da `tokens.json`) con l'intervento che le riduce.
+- `context.py interfaces record --name <nome> --from-card <ID>`: registra l'hash dei
+  file della sezione "Leggi" accanto all'interfaccia (`interfaces/<nome>.json`).
+- `context.py interfaces check|reuse [--name <nome>]`: `fresh|stale|missing`; `reuse`
+  ripesca anche da `.sjck/archive/*/interfaces/`. Exit 0 solo se tutte `fresh`.
+- `context.py interfaces skip`: nodi `scout` pending con interfacce fresche
+  (`reusable`) → `validated` senza lanciarli.
+- `context.py card --id <ID> --role implementer|scout|validator|critic|reviewer
+  [--attempt N]`: la card con le sole sezioni che quel ruolo usa.
+- `context.py state --id <ID>`: goal + il nodo + le sue deps, invece di tutto lo stato.
+- `context.py prompt --id <ID> --role <ruolo> --script "<script>" [--attempt N]`:
+  prompt del nodo con la parte stabile in testa (prompt cache) e la card ridotta.
+
+## config.py / prices.json (costo)
+`config.py prices [--model NOME]` e `config.py validator` stampano la configurazione
+effettiva e da quali file viene. Prezzi: `scripts/prices.json` (distribuito) →
+`~/.sjck/prices.json` → `<run>/.sjck/prices.json` → `$SJCK_PRICES`; per modello
+`input` e `output` in USD per milione, cache read/write dai moltiplicatori
+(`cache_multipliers`: 0,1 e 1,25) o da un prezzo esplicito del modello. Un modello
+assente non ha prezzo inventato: finisce in `cost.unpriced_models` e per lui si
+mostrano solo i token. `tokens.py` scrive `cost` del run e `cost_usd` per nodo, per agente e per modello: reale se il
+transcript ha `cost-state`, altrimenti `estimated: true`.
 
 ## Campi dello stato scritti da te
 - `plan_score`: {width, critical_path, file_overlap, avg_card_tokens, verdict, reasons}.

@@ -23,3 +23,25 @@ Tutti i campi richiesti (`name`, `description`, `tools`, `model`, `model: fable`
 - Gli errori di tool arrivano via `PostToolUseFailure` (formato di `error` non stabile): il loop sull'errore usa i primi 300 caratteri normalizzati. `hooks.json` registra `watchdog.py post` anche su quell'evento.
 - I contatori del watchdog si azzerano quando cambia `attempts` del nodo o arriva un agente nuovo (`agent_id` diverso). Il passaggio di `agent_id` da vuoto a un valore non azzera.
 - Il conteggio dei comandi Bash e degli errori ripetuti riparte dopo ogni scrittura riuscita con contenuto nuovo (progresso).
+
+## Costo (prices.json, tokens.py)
+- La stima vale quanto il listino: prezzi vecchi, numero vecchio. `prices_updated` dice di quando e'.
+- Cache a 1 ora, scaglioni per prompt lunghi, fast mode e batch non sono modellati: un moltiplicatore per modello non li distingue. Override in `.sjck/prices.json`.
+- Modello assente dal listino: nessun prezzo inventato, finisce in `cost.unpriced_models` e i suoi nodi restano senza `cost_usd`.
+- Bedrock/Vertex hanno listini propri (il nome del modello viene riconosciuto senza prefisso provider, il prezzo no).
+- Il costo per nodo eredita l'attribuzione dei token (`unattributed`) e l'errore sull'output ricostruito dei subagenti (~6%).
+- Senza `cost-state` il costo e' marcato `estimated: true`; con `cost-state` il totale e' reale ma la ripartizione per nodo resta una stima (quote per peso di prezzo o per costo da listino).
+
+## Dieta del contesto (context.py)
+- Le categorie di contesto sono stime (`categories_estimated: true`): ordinano gli interventi, non certificano un risparmio.
+- `interfaces skip` si fida della sezione "Leggi" della card: uno scout che legge file non elencati puo' essere saltato a torto.
+- Gli hash sono sul contenuto: un file riformattato rende l'interfaccia `stale` anche se la sostanza non cambia. Oltre 400 file per voce l'hash e' parziale (`partial: true`).
+- Le interfacce non vengono archiviate a fine run: sono la cache tra run. Vanno cancellate a mano se si vuole forzare la rigenerazione.
+- `context.py` non lancia, non ferma e non scrive state.json: decide l'orchestratore.
+
+## Validazione a due livelli (checks.py)
+- I comandi dei criteri girano in una shell nella cartella del run: chi scrive una card esegue codice (come l'agente che li eseguiva, ma senza LLM in mezzo). Le card che arrivano da una change request vanno lette prima.
+- Lo scope si controlla sul diff git: senza `--base` i commit fatti dal nodo non si vedono, e con nodi paralleli sullo stesso working tree il diff include anche i file degli altri (esito piu' prudente, mai piu' permissivo).
+- Un criterio non eseguibile, un esito non interpretabile o uno scope non verificabile portano al livello 2: il livello 1 non chiude mai un nodo in `pass` su un controllo che non ha potuto fare.
+- Il livello 1 non cerca stub vuoti, TODO o test disattivati: se serve quel controllo, va messo come criterio a parole nella card (allora parte il validatore LLM).
+- `checks.py` non ha un hook: lo lancia l'orchestratore dopo ogni nodo. Il modello risolto vale solo se l'orchestratore lo passa come override al lancio.

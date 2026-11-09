@@ -1,0 +1,263 @@
+"""Validazione a due livelli. Solo standard library, nessuna rete.
+
+Livello 1 (questo script): esegue i controlli deterministici della sezione
+"Criteri di accettazione" della card. Livello 2 (LLM): parte solo se il
+livello 1 e' `ambiguous` o se la card lo richiede (`validator: llm`).
+
+Un criterio e' eseguibile se ha la forma  `comando` -> esito atteso
+(freccia `->` o `→`). Esiti attesi riconosciuti: `exit N`, `0 fallimenti`,
+`0 failures`, `ok`, `pass`; esito assente dopo la freccia = exit 0.
+Gli item senza `comando` + freccia sono prosa: non si eseguono e restano
+al livello 2 (`residual`). Un esito con "oppure" e' ambiguo: non si esegue.
+Il livello 1 NON assolve mai cio' che non ha controllato: se resta anche
+un solo criterio non eseguibile l'esito e' `ambiguous`; il livello 2 riceve
+`green` (comandi gia' verdi, da non rieseguire) e `residual` (da giudicare).
+
+Scope-check: il livello 1 confronta il diff (`git diff --name-only <base>`,
+base = `--base <sha>` o HEAD, piu' i file non tracciati, rilevati PRIMA di eseguire
+i comandi) con i percorsi di `## Puoi modificare`. Se il diff tocca altro l'esito
+diventa `ambiguous` (mai `fail`: non e' un criterio fallito) e il livello 2
+giudica lo scope. Se lo scope non e' verificabile (manca la sezione, non e' un
+repo git, base non valida) l'esito e' `ambiguous` comunque: un controllo non
+verificabile non e' un controllo superato. Senza `--base` i commit fatti dal nodo
+sono invisibili (il diff contro HEAD e' vuoto): l'orchestratore passa `--base`.
+
+Modello, effort, timeout e `always_llm` del livello 2 vengono da config.py
+(`.sjck/config.json`, `~/.sjck/config.json`, `$SJCK_CONFIG`,
+`$SJCK_VALIDATOR_MODEL`/`_EFFORT`; default sonnet/high/300 s nel codice):
+l'orchestratore li passa come override al lancio del validatore.
+
+Uso:  checks.py run <ID> [--cwd DIR] [--base SHA] -> JSON (+ .sjck/out/<ID>.l1.json);
+                                          exit 0 pass, 1 fail, 2 ambiguous,
+                                          3 configurazione non valida
+      checks.py model [--cwd DIR]      -> modello del validatore LLM
+"""
+import argparse
+import fnmatch
+import json
+import os
+import re
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+import cards  # noqa: E402
+import config  # noqa: E402
+
+MODELS = ("haiku", "sonnet", "opus", "fable", "inherit")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+DEFAULT_TIMEOUT = 300
+_CRIT = re.compile(r"^\**`([^`]+)`\**\s*(?:→|->)\s*(.*)$")
+_EXIT = re.compile(r"\bexit(?:\s+code)?\s*(\d+)", re.I)
+_OK = re.compile(r"\b0\s+(?:fallimenti|failures|errori|errors)\b|\b(?:ok|pass|passa)\b", re.I)
+_LLM = re.compile(r"^\s*(?:[-*]\s*)?validator\s*:\s*llm\b", re.I | re.M)
+_TAIL = 4000
+
+
+def load_config(cwd="."):
+    """Sezione `validator` della configurazione effettiva (config.py).
+
+    Default nel codice (config.DEFAULT_CONFIG), poi `~/.sjck/config.json`,
+    `<cwd>/.sjck/config.json`, `$SJCK_CONFIG` e `$SJCK_VALIDATOR_MODEL/_EFFORT`:
+    l'ultimo vince. Un valore non valido -> ValueError (exit 3).
+    """
+    cfg = dict(config.load_config(cwd).get("validator") or {})
+    if cfg.get("model") not in MODELS:
+        raise ValueError("modello non valido: %r (ammessi: %s)"
+                         % (cfg.get("model"), ", ".join(MODELS)))
+    if cfg.get("effort") not in EFFORTS:
+        raise ValueError("effort non valido: %r (ammessi: %s)"
+                         % (cfg.get("effort"), ", ".join(EFFORTS)))
+    t = cfg.get("timeout_s", DEFAULT_TIMEOUT)
+    if not isinstance(t, (int, float)) or isinstance(t, bool) or t <= 0:
+        raise ValueError("timeout_s non valido: %r" % (cfg.get("timeout_s"),))
+    cfg["timeout_s"] = t
+    return cfg
+
+
+def parse_checks(card_text):
+    """-> (lista di {'command','expect','exit'}, item prosa non eseguibili)."""
+    found, other = [], []
+    for item in cards.section_items(card_text, "Criteri di accettazione"):
+        if _LLM.match(item):
+            continue  # marcatore, non un criterio
+        m = _CRIT.match(item)
+        if not m:
+            other.append(item)
+            continue
+        cmd, exp = m.group(1).strip(), m.group(2).strip()
+        code = None
+        if not exp:
+            code = 0
+        elif re.search(r"\boppure\b", exp, re.I):
+            code = None
+        elif _EXIT.search(exp):
+            code = int(_EXIT.search(exp).group(1))
+        elif _OK.search(exp):
+            code = 0
+        found.append({"command": cmd, "expect": exp, "exit": code})
+    return found, other
+
+
+def requires_llm(card_text):
+    body = cards.parse_card(card_text).get("Criteri di accettazione", "")
+    return bool(_LLM.search(body))
+
+
+def allowed_paths(card_text):
+    """Percorsi di `## Puoi modificare` (tutti i `...` di ogni voce; se una voce
+    non ha backtick, la sua prima parola). Parsing delle sezioni: cards.py."""
+    out = []
+    for item in cards.section_items(card_text, "Puoi modificare"):
+        toks = re.findall(r"`([^`]+)`", item) or [(item.split() or [""])[0]]
+        out += [t.strip().rstrip(".,;:)") for t in toks if t.strip()]
+    return [p for p in out if p]
+
+
+def _in_scope(path, allowed):
+    for a in allowed:
+        a = a[2:] if a.startswith("./") else a
+        if path == a or fnmatch.fnmatch(path, a):
+            return True
+        if path.startswith(a.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def changed_files(cwd=".", base=None):
+    """File cambiati rispetto a `base` (default HEAD) nel working tree, piu' i non
+    tracciati; None se non e' un repo git o la base non esiste."""
+    def git(*args):
+        p = subprocess.run(("git",) + args, cwd=cwd, stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, universal_newlines=True)
+        return p.stdout.splitlines() if p.returncode == 0 else None
+    try:
+        tracked = git("diff", "--name-only", base or "HEAD")
+        if tracked is None and not base:
+            tracked = git("diff", "--name-only")
+        new = git("ls-files", "--others", "--exclude-standard")
+    except OSError:
+        return None
+    if tracked is None or new is None:
+        return None
+    return sorted(set(tracked + new))
+
+
+def out_of_scope(card_text, cwd=".", base=None):
+    """File del diff non permessi dalla card (ignora .sjck/).
+    -> (lista, verificabile): verificabile=False se manca la sezione o il diff."""
+    allowed = allowed_paths(card_text)
+    changed = changed_files(cwd, base) if allowed else None
+    if changed is None:
+        return [], False
+    return [f for f in changed if not f.startswith(".sjck/") and not _in_scope(f, allowed)], True
+
+
+def decide(res):
+    """Unica decisione livello 1 -> livello 2: (action, invoke_llm).
+    fail -> mai LLM; ambiguous o card che lo richiede -> LLM; altrimenti done."""
+    if res["outcome"] == "fail":
+        return "retry", False
+    if res["outcome"] == "ambiguous" or res["llm_required"]:
+        return "llm", True
+    return "done", False
+
+
+def run_checks(card_text, cwd=".", timeout=DEFAULT_TIMEOUT, base=None):
+    """Esegue il livello 1.
+    -> {'outcome','checks','output','green','residual','llm_required'}."""
+    found, other = parse_checks(card_text)
+    results, output, green = [], [], []
+    residual = list(other)
+    stray, verifiable = out_of_scope(card_text, cwd, base)  # prima dei comandi
+    if not verifiable:
+        residual.append("scope: non verificabile (manca ## Puoi modificare / non è un "
+                        "repo git / base non valida): giudicalo dal diff")
+    elif stray:
+        residual.append("scope: il diff tocca file fuori da `## Puoi modificare`: "
+                        + ", ".join(stray))
+    for c in found:
+        r = {"name": c["command"], "expect": c["expect"]}
+        if c["exit"] is None:
+            r["status"] = "ambiguous"
+            residual.append("`%s` -> %s" % (c["command"], c["expect"]))
+            results.append(r)
+            continue
+        try:
+            p = subprocess.run(c["command"], shell=True, cwd=cwd, timeout=timeout,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               universal_newlines=True)
+            r["code"], text = p.returncode, p.stdout or ""
+            r["status"] = "pass" if p.returncode == c["exit"] else "fail"
+        except subprocess.TimeoutExpired:
+            r["status"], text = "fail", "timeout dopo %ss" % timeout
+        results.append(r)
+        if r["status"] == "pass":
+            green.append(c["command"])
+        else:
+            output.append("$ %s (atteso exit %d)\n%s" % (c["command"], c["exit"], text[-_TAIL:]))
+    if any(r["status"] == "fail" for r in results):
+        outcome = "fail"
+    elif residual or not results:
+        outcome = "ambiguous"  # un controllo assente non e' un controllo superato
+    else:
+        outcome = "pass"
+    return {"outcome": outcome, "checks": results, "output": "\n\n".join(output),
+            "green": green, "residual": residual, "out_of_scope": stray,
+            "llm_required": requires_llm(card_text)}
+
+
+def validate(card_text, run_llm, cwd=".", config=None, base=None):
+    """Orchestra i due livelli. `run_llm(model, green, residual)` e' il lancio del
+    validatore LLM (iniettato: nei test e' una spia). Su `fail` NON viene chiamato."""
+    cfg = config or load_config(cwd)
+    res = run_checks(card_text, cwd, cfg.get("timeout_s", DEFAULT_TIMEOUT), base)
+    if cfg.get("always_llm"):
+        res["llm_required"] = True          # il livello 2 parte comunque
+    res["model"], res["effort"] = cfg["model"], cfg.get("effort")
+    res["action"], res["invoke_llm"] = decide(res)
+    res["llm_invoked"] = res["invoke_llm"]
+    res["verdict"] = {"retry": "fail", "done": "pass"}.get(res["action"])
+    if res["invoke_llm"]:
+        res["verdict"] = run_llm(cfg["model"], res["green"], res["residual"])
+    return res
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("run")
+    r.add_argument("id")
+    r.add_argument("--cwd", default=".")
+    r.add_argument("--base", default=None,
+                   help="commit da cui il nodo e' partito (default HEAD)")
+    m = sub.add_parser("model")
+    m.add_argument("--cwd", default=".")
+    a = ap.parse_args(argv)
+    try:
+        cfg = load_config(a.cwd)
+    except (ValueError, OSError) as e:
+        print("checks.py: configurazione non valida: %s" % e, file=sys.stderr)
+        return 3
+    if a.cmd == "model":
+        print(cfg["model"])
+        return 0
+    path = os.path.join(a.cwd, ".sjck", "cards", a.id + ".md")
+    with open(path, encoding="utf-8") as f:
+        res = run_checks(f.read(), a.cwd, cfg.get("timeout_s", DEFAULT_TIMEOUT), a.base)
+    if cfg.get("always_llm"):
+        res["llm_required"] = True
+    res["action"], res["invoke_llm"] = decide(res)
+    res.update(id=a.id, model=cfg["model"], effort=cfg.get("effort"))
+    out = os.path.join(a.cwd, ".sjck", "out")
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, a.id + ".l1.json"), "w", encoding="utf-8") as f:
+        json.dump(res, f, ensure_ascii=False)
+    print(json.dumps(res, ensure_ascii=False))
+    return {"pass": 0, "fail": 1, "ambiguous": 2}[res["outcome"]]
+
+
+if __name__ == "__main__":
+    sys.exit(main())

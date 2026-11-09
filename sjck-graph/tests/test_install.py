@@ -44,6 +44,7 @@ class TestInstall(unittest.TestCase):
             "commands/c.md": "cmd\n",
             "skills/s/SKILL.md": "run ${CLAUDE_PLUGIN_ROOT}/scripts/x.py\n",
             "scripts/x.py": "print(1)\n",
+            "scripts/prices.json": "{}\n",
         }
         if pycache:
             files["scripts/__pycache__/x.cpython-39.pyc"] = "junk"
@@ -83,6 +84,13 @@ class TestInstall(unittest.TestCase):
         self.assertIn("/.claude/sjck-scripts/x.py", txt)
         self.assertTrue(any(w.endswith("/.claude/sjck-scripts/x.py") for w in txt.split()), txt)
         self.assertTrue(os.path.isabs(txt.split()[1]), txt)
+
+    def test_copies_the_price_list_next_to_the_scripts(self):
+        """config.py cerca prices.json accanto a se stesso: va copiato con gli script."""
+        self.make_tgz(False)
+        p = self.install()
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertTrue(os.path.isfile(os.path.join(self.proj, ".claude", "sjck-scripts", "prices.json")))
 
     def test_reinstall_no_bak(self):
         self.make_tgz(False)
