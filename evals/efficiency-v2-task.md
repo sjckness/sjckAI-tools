@@ -80,7 +80,7 @@ l'eccezione come oggi, poi rilancia il runner). I Step 0-2 e la chiusura (review
 come sono. `/sjck-run` deve continuare a funzionare così com'è per console ed estensione.
 Obiettivo misurabile: l'orchestratore passa da 112 turni a una decina per run.
 
-## Parte C — mosse piccole (solo dopo A e B completate e testate)
+## Parte C — mosse piccole (solo dopo A e B completate)
 
 - **C1, politica dei modelli** in `agents/sjck-planner.md`: Opus per un implementer solo se
   molti nodi dipendono da lui o il rischio è alto; altrimenti Sonnet.
